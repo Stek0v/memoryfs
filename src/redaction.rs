@@ -590,7 +590,11 @@ mod tests {
 
     #[test]
     fn detect_slack_bot_token() {
-        let r = scan(concat!("xoxb-", "1234567890-1234567890123-", "AbCdEfGhIjKlMnOpQrStUvWx"));
+        let r = scan(concat!(
+            "xoxb-",
+            "1234567890-1234567890123-",
+            "AbCdEfGhIjKlMnOpQrStUvWx"
+        ));
         assert!(r.has_secrets());
     }
 

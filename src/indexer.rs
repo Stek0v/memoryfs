@@ -271,7 +271,7 @@ impl<E: Embedder, V: VectorStore> Indexer<E, V> {
     }
 
     fn delete_bm25_chunks(&self, memory_id: &MemoryId) -> Result<()> {
-        let prefix = format!("{}:", memory_id);
+        let prefix = format!("{memory_id}:");
         let mut writer = self.bm25_index.writer(15_000_000)?;
         // Delete all chunks with this memory ID prefix.
         // Tantivy doesn't support prefix delete, so we delete the memory_id term

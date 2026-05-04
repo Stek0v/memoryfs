@@ -236,14 +236,13 @@ impl EntityGraph {
         let name_key = (canonical_name.to_lowercase(), kind.clone());
         if let Some(existing_id) = self.name_index.get(&name_key) {
             return Err(MemoryFsError::Conflict(format!(
-                "entity with name {:?} and kind {} already exists: {existing_id}",
-                canonical_name, kind
+                "entity with name {canonical_name:?} and kind {kind} already exists: {existing_id}"
             )));
         }
 
         let id = EntityId::new();
         let now = Utc::now();
-        let file_path = format!("entities/{}/{}.md", kind, id);
+        let file_path = format!("entities/{kind}/{id}.md");
         let id_str = id.to_string();
 
         let entity = Entity {

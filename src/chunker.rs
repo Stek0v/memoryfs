@@ -177,7 +177,7 @@ fn split_section(section: Section, config: &ChunkConfig, original: &str, chunks:
             let overlap_chars = prev_chars.len().min(config.overlap_size);
             let overlap_start = prev_chars.len() - overlap_chars;
             let overlap_str: String = prev_chars[overlap_start..].iter().collect();
-            format!("{}{}", overlap_str, sub)
+            format!("{overlap_str}{sub}")
         } else {
             sub.clone()
         };
@@ -626,8 +626,7 @@ mod tests {
                 let body = chunk.text.trim_start_matches("# H1").trim();
                 assert!(
                     body.is_empty(),
-                    "H1-only chunk should have no body: {:?}",
-                    body
+                    "H1-only chunk should have no body: {body:?}"
                 );
             }
         }

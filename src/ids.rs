@@ -136,7 +136,7 @@ impl MemoryId {
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(&digest[..16]);
         let ulid = ulid::Ulid::from_bytes(bytes);
-        Self(format!("mem_{}", ulid))
+        Self(format!("mem_{ulid}"))
     }
 }
 prefixed_id!(ConvId, "conv_", "Идентификатор conversation.");
@@ -160,8 +160,7 @@ impl CommitHash {
     pub fn parse(s: &str) -> crate::Result<Self> {
         if s.len() != 64 || !s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
             return Err(crate::MemoryFsError::Validation(format!(
-                "commit hash must be 64 lowercase hex chars, got {:?}",
-                s
+                "commit hash must be 64 lowercase hex chars, got {s:?}"
             )));
         }
         Ok(Self(s.to_string()))
@@ -181,7 +180,7 @@ mod tests {
     fn ulid_rejects_forbidden_chars() {
         for bad in ["L", "I", "O", "U"] {
             let s: String = bad.repeat(26);
-            assert!(Ulid::parse(&s).is_err(), "should reject all-{}", bad);
+            assert!(Ulid::parse(&s).is_err(), "should reject all-{bad}");
         }
     }
 

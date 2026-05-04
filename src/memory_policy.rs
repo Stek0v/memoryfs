@@ -177,7 +177,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::Sensitivity(_))));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -191,7 +191,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::Sensitivity(_))));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -205,7 +205,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::Sensitivity(_))));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -219,7 +219,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::Sensitivity(_))));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -233,7 +233,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::Sensitivity(_))));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -247,7 +247,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::LowConfidence { .. })));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -259,7 +259,7 @@ mod tests {
             PolicyDecision::RequiresReview(reasons) => {
                 assert!(reasons.iter().any(|r| matches!(r, ReviewReason::OrgScope)));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 
@@ -271,7 +271,7 @@ mod tests {
             PolicyDecision::RequiresReview(reasons) => {
                 assert_eq!(reasons.len(), 3);
             }
-            other => panic!("expected RequiresReview with 3 reasons, got {:?}", other),
+            other => panic!("expected RequiresReview with 3 reasons, got {other:?}"),
         }
     }
 
@@ -294,7 +294,7 @@ mod tests {
                     .iter()
                     .any(|r| matches!(r, ReviewReason::LowConfidence { .. })));
             }
-            other => panic!("expected RequiresReview, got {:?}", other),
+            other => panic!("expected RequiresReview, got {other:?}"),
         }
     }
 

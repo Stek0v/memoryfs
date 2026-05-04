@@ -763,7 +763,7 @@ fn derive_workspace_id(root: &std::path::Path) -> String {
     };
 
     let hash = Sha256::digest(canonical.to_string_lossy().as_bytes());
-    let suffix: String = hash.iter().take(4).map(|b| format!("{:02x}", b)).collect();
+    let suffix: String = hash.iter().take(4).map(|b| format!("{b:02x}")).collect();
 
     format!("{slug}_{suffix}")
 }

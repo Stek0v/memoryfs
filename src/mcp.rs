@@ -1672,8 +1672,7 @@ mod tests {
 
         let server = McpServer::new(state);
         let msg = format!(
-            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"memoryfs_link_entity","arguments":{{"src":"{}","dst":"{}","relation":"USES"}}}}}}"#,
-            a, b
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"memoryfs_link_entity","arguments":{{"src":"{a}","dst":"{b}","relation":"USES"}}}}}}"#
         );
         let resp = server.handle_message(&msg).await;
         let result = resp.result.unwrap();
@@ -1710,8 +1709,7 @@ mod tests {
         assert!(run_id.starts_with("run_"));
 
         let finish_msg = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"memoryfs_finish_run","arguments":{{"run_id":"{}","status":"succeeded"}}}}}}"#,
-            run_id
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"memoryfs_finish_run","arguments":{{"run_id":"{run_id}","status":"succeeded"}}}}}}"#
         );
         let finish_resp = server.handle_message(&finish_msg).await;
         let result = finish_resp.result.unwrap();
@@ -1952,8 +1950,7 @@ mod tests {
         let h2 = c2["commit_hash"].as_str().unwrap().to_string();
 
         let diff_msg = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"memoryfs_diff","arguments":{{"from":"{}","to":"{}"}}}}}}"#,
-            h1, h2
+            r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"memoryfs_diff","arguments":{{"from":"{h1}","to":"{h2}"}}}}}}"#
         );
         let diff_resp = server.handle_message(&diff_msg).await;
         let result = diff_resp.result.unwrap();
@@ -1998,8 +1995,7 @@ mod tests {
             .await;
 
         let revert_msg = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"memoryfs_revert","arguments":{{"target_commit":"{}","reason":"rollback"}}}}}}"#,
-            h1
+            r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"memoryfs_revert","arguments":{{"target_commit":"{h1}","reason":"rollback"}}}}}}"#
         );
         let revert_resp = server.handle_message(&revert_msg).await;
         let result = revert_resp.result.unwrap();

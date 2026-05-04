@@ -28,8 +28,7 @@ impl ObjectHash {
     pub fn parse(s: &str) -> Result<Self> {
         if s.len() != 64 || !s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
             return Err(MemoryFsError::Validation(format!(
-                "object hash must be 64 lowercase hex chars, got {:?}",
-                s
+                "object hash must be 64 lowercase hex chars, got {s:?}"
             )));
         }
         Ok(Self(s.to_string()))

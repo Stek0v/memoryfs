@@ -491,7 +491,7 @@ mod tests {
         graph.supersede("mem_b", &["mem_a"]).unwrap();
 
         let issues = graph.validate();
-        assert!(issues.is_empty(), "unexpected issues: {:?}", issues);
+        assert!(issues.is_empty(), "unexpected issues: {issues:?}");
     }
 
     #[test]

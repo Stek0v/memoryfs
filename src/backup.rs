@@ -97,7 +97,7 @@ pub fn create_backup(params: &BackupParams<'_>) -> Result<BackupManifest> {
         let data = object_store.get(hash)?;
         let obj_path = objects_dir.join(hash.as_str());
         std::fs::write(&obj_path, &data).map_err(|e| {
-            MemoryFsError::Internal(anyhow::anyhow!("failed to write object {}: {e}", hash))
+            MemoryFsError::Internal(anyhow::anyhow!("failed to write object {hash}: {e}"))
         })?;
         object_hashes.push(hash.as_str().to_string());
     }

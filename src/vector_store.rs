@@ -124,7 +124,7 @@ impl QdrantVectorStore {
     /// Build a point ID from memory_id + chunk_index.
     /// Uses a deterministic UUID v5 so the same (memory, chunk) always maps to the same point.
     fn point_id(memory_id: &MemoryId, chunk_index: u32) -> String {
-        format!("{}:{}", memory_id, chunk_index)
+        format!("{memory_id}:{chunk_index}")
     }
 
     fn build_filter(filter: &VectorFilter) -> qdrant_client::qdrant::Filter {
