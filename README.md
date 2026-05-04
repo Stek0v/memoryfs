@@ -17,15 +17,23 @@ LLM coding agents lose every decision the moment a session ends or `/compact` tr
 
 ## Install
 
+Minimal — MCP only, no semantic search:
+
 ```bash
-cargo install --git https://github.com/stek0v/memoryfs --locked
+cargo install --git https://github.com/stek0v/memoryfs --locked && claude mcp add memoryfs --scope user -- memoryfs mcp
 ```
 
-Requires Rust 1.88+. Pulls a single binary named `memoryfs`.
+Full stack — MemoryFS + Levara (semantic recall) + Ollama embedder + MCP wired with vector backend:
+
+```bash
+cargo install --git https://github.com/stek0v/memoryfs --locked --force && (docker ps -a --format '{{.Names}}' | grep -q '^levara$' || docker run -d --name levara -p 50051:50051 -p 8080:8080 ghcr.io/stek0v/levara:latest) && (command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh) && ollama pull nomic-embed-text && claude mcp add memoryfs --scope user --env LEVARA_GRPC_ENDPOINT=http://127.0.0.1:50051 -- memoryfs mcp
+```
+
+Requires Rust 1.88+, Docker, and the Claude Code CLI. The `--env LEVARA_GRPC_ENDPOINT=…` is what wires Levara into MCP: with it, every commit auto-indexes to vectors and recall returns hybrid (vector + BM25) hits; without it, MCP runs in pure-file mode (substring recall). Same applies to `memoryfs serve` (REST).
 
 ## Use it from Claude Code (MCP)
 
-Register globally so every project gets memory automatically:
+The one-liner above already runs:
 
 ```bash
 claude mcp add memoryfs --scope user -- memoryfs mcp

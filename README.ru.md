@@ -17,15 +17,23 @@ LLM-агенты теряют все решения сразу как сесси
 
 ## Установка
 
+Минимум — только MCP, без семантического поиска:
+
 ```bash
-cargo install --git https://github.com/stek0v/memoryfs --locked
+cargo install --git https://github.com/stek0v/memoryfs --locked && claude mcp add memoryfs --scope user -- memoryfs mcp
 ```
 
-Требуется Rust 1.88+. Ставит один бинарь `memoryfs`.
+Полный стек — MemoryFS + Levara (семантический recall) + Ollama embedder + MCP подключён с vector-бэкендом:
+
+```bash
+cargo install --git https://github.com/stek0v/memoryfs --locked --force && (docker ps -a --format '{{.Names}}' | grep -q '^levara$' || docker run -d --name levara -p 50051:50051 -p 8080:8080 ghcr.io/stek0v/levara:latest) && (command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh) && ollama pull nomic-embed-text && claude mcp add memoryfs --scope user --env LEVARA_GRPC_ENDPOINT=http://127.0.0.1:50051 -- memoryfs mcp
+```
+
+Нужны Rust 1.88+, Docker и Claude Code CLI. `--env LEVARA_GRPC_ENDPOINT=…` — это и есть проводок Levara в MCP: с ним каждый commit автоиндексируется в векторы, recall возвращает hybrid (vector + BM25) попадания; без него MCP работает в чисто файловом режиме (substring recall). То же касается `memoryfs serve` (REST).
 
 ## Подключение к Claude Code (MCP)
 
-Зарегистрируй глобально — каждый проект автоматически получит память:
+Однострочник выше уже выполняет:
 
 ```bash
 claude mcp add memoryfs --scope user -- memoryfs mcp
@@ -74,7 +82,7 @@ OpenAPI 3.1: [`specs/openapi.yaml`](specs/openapi.yaml).
 | [indexing](docs/components/indexing.md)   | Event-driven chunk → embed → upsert |
 | [audit](docs/components/audit.md)         | Tamper-evident NDJSON лог |
 
-Интеграции: [Claude Code](docs/integrations/claude-code.md) · [REST API](docs/integrations/rest-api.md) · [Levara](docs/integrations/levara.md)
+Интеграции: [Claude Code](docs/integrations/claude-code.md) · [REST API](docs/integrations/rest-api.md) · [Levara](docs/integrations/levara.ru.md)
 
 ## Тестирование
 

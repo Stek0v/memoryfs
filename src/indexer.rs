@@ -362,6 +362,22 @@ impl<E: Embedder, V: VectorStore> Indexer<E, V> {
     }
 }
 
+/// Type-erased indexer handle — lets a non-generic state struct (e.g. McpState)
+/// hold an indexer without leaking its `<E, V>` parameters into every consumer.
+#[async_trait::async_trait]
+pub trait IndexBatch: Send + Sync {
+    /// Index a batch of file changes; returns total chunks written across the batch.
+    async fn run(&self, changes: Vec<FileChange>) -> Result<usize>;
+}
+
+#[async_trait::async_trait]
+impl<E: Embedder + 'static, V: VectorStore + 'static> IndexBatch for Indexer<E, V> {
+    async fn run(&self, changes: Vec<FileChange>) -> Result<usize> {
+        let results = self.index_batch(&changes).await?;
+        Ok(results.iter().map(|r| r.chunk_count).sum())
+    }
+}
+
 fn is_indexable_event(kind: &EventKind) -> bool {
     matches!(
         kind,

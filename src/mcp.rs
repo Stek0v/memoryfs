@@ -173,6 +173,10 @@ pub struct McpState {
     pub auth: McpAuth,
     /// Retrieval engine for semantic recall. `None` falls back to substring search.
     pub retrieval: Option<Arc<dyn crate::api::ContextRetriever>>,
+    /// Background indexer wired in when a vector backend is configured.
+    /// Each successful commit fires a fire-and-forget index batch so Levara
+    /// stays in sync without the agent having to wait on it.
+    pub indexer: Option<Arc<dyn crate::indexer::IndexBatch>>,
 }
 
 /// MCP server that dispatches JSON-RPC calls to tool handlers.
@@ -447,6 +451,51 @@ impl McpServer {
             snapshot,
             parent.as_deref(),
         )?;
+
+        // Fire-and-forget indexing: when a vector backend is configured, push
+        // the post-commit snapshot through it so semantic recall sees the new
+        // state immediately. Errors only land in tracing; we never block or
+        // fail the commit on indexer hiccups.
+        if let Some(indexer) = &self.state.indexer {
+            let snapshot: Vec<(String, crate::storage::ObjectHash)> = self
+                .state
+                .index
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(p, h)| (p.to_string(), h.clone()))
+                .collect();
+            let workspace_id = self.state.auth.workspace_id.clone();
+            let commit_hash = commit.hash.to_string();
+            let store = self.state.object_store.clone();
+            let indexer = indexer.clone();
+
+            let changes: Vec<crate::indexer::FileChange> = snapshot
+                .iter()
+                .map(|(path, hash)| {
+                    let content = store
+                        .get(hash)
+                        .ok()
+                        .map(|data| String::from_utf8_lossy(&data).to_string());
+                    crate::indexer::FileChange {
+                        memory_id: crate::ids::MemoryId::from_path(path),
+                        file_path: path.clone(),
+                        workspace_id: workspace_id.clone(),
+                        content,
+                        commit: commit_hash.clone(),
+                    }
+                })
+                .collect();
+
+            tokio::spawn(async move {
+                match indexer.run(changes).await {
+                    Ok(chunks) => tracing::info!(
+                        "mcp indexer: indexed commit {commit_hash} ({chunks} chunks)"
+                    ),
+                    Err(e) => tracing::error!("mcp indexer error: {e}"),
+                }
+            });
+        }
 
         Ok(serde_json::json!({
             "commit_hash": commit.hash.as_str(),
@@ -1307,6 +1356,7 @@ mod tests {
             policy,
             auth,
             retrieval: None,
+            indexer: None,
         }
     }
 
@@ -1451,6 +1501,60 @@ mod tests {
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 17);
+    }
+
+    #[tokio::test]
+    async fn commit_fires_indexer_when_attached() {
+        use crate::indexer::{FileChange, IndexBatch};
+        use std::sync::Mutex;
+
+        // Stub indexer captures every batch it sees.
+        struct Capture(Arc<Mutex<Vec<FileChange>>>);
+
+        #[async_trait::async_trait]
+        impl IndexBatch for Capture {
+            async fn run(&self, changes: Vec<FileChange>) -> crate::Result<usize> {
+                self.0.lock().unwrap().extend(changes.iter().cloned());
+                Ok(changes.iter().map(|_| 1).sum())
+            }
+        }
+
+        let captured: Arc<Mutex<Vec<FileChange>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut state = test_state();
+        state.indexer = Some(Arc::new(Capture(captured.clone())));
+        let server = McpServer::new(state);
+
+        // Stage a file then commit.
+        server
+            .handle_message(
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memoryfs_write_file","arguments":{"path":"infra/db.md","content":"postgres 16"}}}"#,
+            )
+            .await;
+        let commit_resp = server
+            .handle_message(
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memoryfs_commit","arguments":{"message":"add db note"}}}"#,
+            )
+            .await;
+        assert!(commit_resp.result.is_some(), "commit should succeed");
+
+        // Indexer fires via tokio::spawn — yield until it runs.
+        for _ in 0..50 {
+            if !captured.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        let batch = captured.lock().unwrap();
+        assert!(
+            !batch.is_empty(),
+            "indexer should have received the post-commit snapshot"
+        );
+        assert!(
+            batch.iter().any(|c| c.file_path == "infra/db.md"),
+            "expected the staged file in the batch, got: {:?}",
+            batch.iter().map(|c| &c.file_path).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]
@@ -1930,6 +2034,7 @@ mod tests {
             policy,
             auth,
             retrieval: None,
+            indexer: None,
         }
     }
 

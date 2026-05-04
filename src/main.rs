@@ -464,25 +464,111 @@ async fn cmd_mcp() -> Result<()> {
     std::fs::create_dir_all(data_path)
         .with_context(|| format!("failed to create data dir: {data_dir}"))?;
 
-    let store =
-        ObjectStore::open(data_path.join("objects")).context("failed to open object store")?;
+    let store = Arc::new(
+        ObjectStore::open(data_path.join("objects")).context("failed to open object store")?,
+    );
+    let index = Arc::new(std::sync::RwLock::new(InodeIndex::new()));
+
+    // ── Optional Levara wiring ─────────────────────────────────────────────
+    // When LEVARA_GRPC_ENDPOINT is set, build a real retrieval engine + indexer
+    // so MCP `recall` does hybrid (vector + BM25) search and every commit fires
+    // an index update. Without it, McpState falls back to the in-process
+    // substring matcher in `tool_recall`.
+    let (retrieval, indexer) = build_levara_pipeline(data_path, store.clone(), index.clone())
+        .await
+        .context("failed to wire Levara pipeline")?;
 
     let policy = Policy::local_user(&auth.subject);
     let state = McpState {
-        object_store: Arc::new(store),
-        index: Arc::new(std::sync::RwLock::new(InodeIndex::new())),
+        object_store: store,
+        index,
         commit_log: Arc::new(std::sync::RwLock::new(CommitGraph::new())),
         entity_graph: Arc::new(std::sync::RwLock::new(EntityGraph::new())),
         run_store: Arc::new(std::sync::RwLock::new(RunStore::new())),
         policy,
         auth,
-        retrieval: None,
+        retrieval,
+        indexer,
     };
 
     let server = McpServer::new(state);
     server.run_stdio().await.context("MCP server error")?;
 
     Ok(())
+}
+
+#[allow(clippy::type_complexity)]
+async fn build_levara_pipeline(
+    data_path: &std::path::Path,
+    store: Arc<memoryfs::storage::ObjectStore>,
+    index: Arc<std::sync::RwLock<memoryfs::storage::InodeIndex>>,
+) -> Result<(
+    Option<Arc<dyn memoryfs::api::ContextRetriever>>,
+    Option<Arc<dyn memoryfs::indexer::IndexBatch>>,
+)> {
+    use memoryfs::bm25::Bm25Index;
+    use memoryfs::embedder::{HttpEmbedder, HttpEmbedderConfig};
+    use memoryfs::indexer::{Indexer, IndexerConfig};
+    use memoryfs::levara::{LevaraClient, LevaraVectorStore};
+    use memoryfs::retrieval::RetrievalEngine;
+
+    let Ok(grpc_url) = std::env::var("LEVARA_GRPC_ENDPOINT") else {
+        return Ok((None, None));
+    };
+
+    let embed_endpoint =
+        std::env::var("EMBEDDING_ENDPOINT").unwrap_or_else(|_| "http://localhost:11434".into());
+    let embed_model =
+        std::env::var("EMBEDDING_MODEL").unwrap_or_else(|_| "nomic-embed-text".into());
+    let embed_dims: usize = std::env::var("EMBEDDING_DIMENSIONS")
+        .unwrap_or_else(|_| "768".into())
+        .parse()
+        .unwrap_or(768);
+    let collection = std::env::var("LEVARA_COLLECTION").unwrap_or_else(|_| "memoryfs".into());
+
+    let mut levara_client =
+        LevaraClient::connect(&grpc_url, &embed_endpoint, &embed_model, embed_dims)
+            .await
+            .with_context(|| format!("failed to connect to Levara gRPC at {grpc_url}"))?;
+    if let Ok(http_base) = std::env::var("LEVARA_HTTP_ENDPOINT") {
+        levara_client = levara_client.with_http_base(http_base);
+    }
+
+    let vector_store = Arc::new(LevaraVectorStore::new(levara_client, collection));
+    vector_store
+        .ensure_collection()
+        .await
+        .context("failed to ensure Levara collection")?;
+
+    let embedder = Arc::new(HttpEmbedder::new(HttpEmbedderConfig {
+        endpoint: embed_endpoint,
+        model: embed_model,
+        dimension: embed_dims,
+        batch_size: 64,
+    }));
+
+    let bm25_index = Arc::new(
+        Bm25Index::open(&data_path.join("bm25"))
+            .unwrap_or_else(|_| Bm25Index::in_memory().expect("BM25 in-memory")),
+    );
+
+    let engine = RetrievalEngine::new(
+        vector_store.clone(),
+        embedder.clone(),
+        bm25_index.clone(),
+        store,
+        index,
+    )
+    .with_hybrid_backend(vector_store.clone());
+
+    let indexer = Indexer::new(embedder, vector_store, bm25_index, IndexerConfig::default());
+
+    tracing::info!("mcp: connected to Levara at {grpc_url}");
+
+    Ok((
+        Some(Arc::new(engine) as Arc<dyn memoryfs::api::ContextRetriever>),
+        Some(Arc::new(indexer) as Arc<dyn memoryfs::indexer::IndexBatch>),
+    ))
 }
 
 // ── Client commands ──────────────────────────────────────────────────────
