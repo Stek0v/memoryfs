@@ -1,0 +1,1550 @@
+openapi: 3.1.0
+info:
+  title: MemoryFS REST API
+  version: 1.0.0-draft
+  summary: Verifiable memory workspace for AI agents
+  description: |
+    REST API для MemoryFS workspace. Markdown-файлы во фронтматтере остаются источником истины,
+    индексы (vector / BM25 / graph) — строго derived. Все мутации проходят через commit-graph
+    (append-only). Sensitive памяти (pii / secret / medical / legal / financial) требуют review
+    перед попаданием в active-сет. Подробнее — `00-analysis.md`, `01-architecture.md`, `02-data-model.md`.
+
+    ## Транспорты
+    - REST/JSON (этот документ)
+    - MCP stdio + sse (`specs/mcp.tools.json`)
+    - CLI поверх REST (`memoryfs <cmd>`)
+
+    ## Версионирование
+    Версия в URL (`/v1/`). Добавление полей — non-breaking. Удаление/переименование — major bump.
+    Deprecation policy ≥6 месяцев.
+
+  contact:
+    name: MemoryFS
+    url: https://memoryfs.dev
+  license:
+    name: Apache-2.0
+
+servers:
+  - url: http://localhost:7777/v1
+    description: Local single-user
+  - url: https://{host}/v1
+    description: Team server
+    variables:
+      host:
+        default: memoryfs.example.com
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: workspaces
+  - name: files
+  - name: commits
+  - name: memories
+  - name: context
+  - name: runs
+  - name: entities
+  - name: admin
+
+paths:
+  /auth/token:
+    post:
+      tags: [auth]
+      summary: Issue user or agent token
+      description: Returns a signed JWT with utk_ (user) or atk_ (agent) prefix. Agent tokens have a 7-day TTL cap.
+      operationId: issueToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IssueTokenRequest' }
+      responses:
+        '201':
+          description: Token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssuedToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    delete:
+      tags: [auth]
+      summary: Revoke current token
+      description: Invalidates the bearer token from the Authorization header. Idempotent — revoking an already-revoked token returns 204.
+      operationId: revokeToken
+      responses:
+        '204': { description: Revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /workspaces:
+    post:
+      tags: [workspaces]
+      summary: Create workspace
+      description: Creates a new workspace with an empty commit graph. Optionally applies a template (solo, team, agent-fleet) for default policy and ACL.
+      operationId: createWorkspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkspaceRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [workspaces]
+      summary: List workspaces visible to caller
+      description: Returns workspaces the authenticated principal has access to, paginated by cursor.
+      operationId: listWorkspaces
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Workspace' }
+                  next_cursor:
+                    type: [string, "null"]
+
+  /workspaces/{workspace_id}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdPath'
+    get:
+      tags: [workspaces]
+      summary: Get workspace
+      description: Returns workspace metadata including current HEAD commit.
+      operationId: getWorkspace
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /workspaces/{workspace_id}/commit:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdPath'
+    post:
+      tags: [commits]
+      summary: Create a commit from staged changes
+      description: |
+        Создаёт коммит из ранее сделанных PUT в файлы. Атомарен — либо все изменения попадают в HEAD,
+        либо ни одно. Поддерживает Idempotency-Key.
+      operationId: createCommit
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCommitRequest' }
+      responses:
+        '201':
+          description: Commit created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Commit' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /workspaces/{workspace_id}/revert:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdPath'
+    post:
+      tags: [commits]
+      summary: Revert to prior commit (forward-only)
+      description: |
+        Не переписывает историю — создаёт новый revert-коммит, восстанавливающий состояние target.
+      operationId: revertCommit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_commit, reason]
+              additionalProperties: false
+              properties:
+                target_commit: { type: string, pattern: '^[a-f0-9]{64}$' }
+                reason: { type: string, maxLength: 1024 }
+                paths:
+                  type: array
+                  items: { type: string }
+                  description: Опциональный пакет путей. Если пуст — revert всего workspace.
+                  uniqueItems: true
+      responses:
+        '201':
+          description: Revert commit created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Commit' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /workspaces/{workspace_id}/log:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdPath'
+    get:
+      tags: [commits]
+      summary: List commits
+      description: Returns the commit log, optionally filtered by path, author, or time range. Newest-first order.
+      operationId: getCommitLog
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - in: query
+          name: path
+          schema: { type: string }
+          description: Фильтр по пути (точное совпадение или префикс через `*`).
+        - in: query
+          name: author
+          schema: { $ref: '#/components/schemas/Subject' }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time }
+        - in: query
+          name: until
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Commit' }
+                  next_cursor:
+                    type: [string, "null"]
+
+  /workspaces/{workspace_id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdPath'
+    get:
+      tags: [commits]
+      summary: Diff between two commits
+      description: Computes the difference between two commits. Returns JSON hunks or unified diff depending on the format parameter.
+      operationId: getDiff
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+        - in: query
+          name: path
+          schema: { type: string }
+        - in: query
+          name: format
+          schema: { type: string, enum: [unified, json], default: json }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Diff' }
+            text/x-diff:
+              schema: { type: string }
+
+  /files/{path}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: path
+        required: true
+        schema: { type: string }
+        description: Относительный путь файла. URL-encoded `/` для вложенности.
+    get:
+      tags: [files]
+      summary: Read file at HEAD or specific commit
+      description: Returns file content with frontmatter at HEAD or a specific commit. ACL-gated — returns 403 if the caller lacks read access.
+      operationId: readFile
+      parameters:
+        - in: query
+          name: at_commit
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+          description: Если опущен — HEAD.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileContent' }
+            text/markdown:
+              schema: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [files]
+      summary: Stage file write (will be visible after commit)
+      description: |
+        Записывает файл в staging. Изменения становятся видимы только после `/commit`.
+        `If-Match: <commit_hash>` — optimistic concurrency для базы изменений.
+      operationId: writeFile
+      parameters:
+        - in: header
+          name: If-Match
+          required: false
+          schema: { type: string, pattern: '^[a-f0-9]{64}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WriteFileRequest' }
+      responses:
+        '200':
+          description: Staged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StagedFile' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    delete:
+      tags: [files]
+      summary: Forbidden (use /archive)
+      description: Always returns 405. Workspace is append-only — use POST /files/archive to move files to archive instead.
+      operationId: deleteFileForbidden
+      responses:
+        '204':
+          description: Not used — endpoint always returns 405
+        '405':
+          description: Method Not Allowed (workspace is append-only)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /files/archive:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+    post:
+      tags: [files]
+      summary: Move file(s) to archive/
+      description: |
+        Перемещает в `archive/<original_path>` с сохранением истории. Восстановление — обычным write.
+      operationId: archiveFile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paths, reason]
+              properties:
+                paths:
+                  type: array
+                  items: { type: string }
+                  minItems: 1
+                  uniqueItems: true
+                reason: { type: string, maxLength: 1024 }
+      responses:
+        '200':
+          description: Archived
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [archived]
+                properties:
+                  archived:
+                    type: array
+                    items:
+                      type: object
+                      required: [from, to]
+                      properties:
+                        from: { type: string }
+                        to: { type: string }
+
+  /files:
+    get:
+      tags: [files]
+      summary: List files
+      operationId: listFiles
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - in: query
+          name: prefix
+          schema: { type: string }
+        - in: query
+          name: type
+          schema: { $ref: '#/components/schemas/FileType' }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/FileSummary' }
+                  next_cursor:
+                    type: [string, "null"]
+
+  /memories/propose:
+    post:
+      tags: [memories]
+      summary: Propose a new memory
+      description: |
+        Возможные результаты:
+        - `auto_committed` — записана сразу (sensitivity=normal, confidence высокий, нет конфликтов).
+        - `pending_review` — попала в inbox.
+        - `rejected` — нарушает policy.
+      operationId: proposeMemory
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposeMemoryRequest' }
+      responses:
+        '201':
+          description: Proposed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProposeMemoryResponse' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /memories/{memory_id}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: memory_id
+        required: true
+        schema: { type: string, pattern: '^mem_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+    get:
+      tags: [memories]
+      summary: Get memory by id
+      operationId: getMemory
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Memory' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /memories/{memory_id}/supersede:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: memory_id
+        required: true
+        schema: { type: string, pattern: '^mem_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+    post:
+      tags: [memories]
+      summary: Supersede an existing memory
+      operationId: supersedeMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SupersedeRequest' }
+      responses:
+        '201':
+          description: New memory created, old marked superseded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [new_memory_id, old_memory_id, commit]
+                properties:
+                  new_memory_id: { type: string }
+                  old_memory_id: { type: string }
+                  commit: { type: string }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+
+  /memories/search:
+    post:
+      tags: [memories]
+      summary: Hybrid search across memories
+      operationId: searchMemories
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+
+  /memories/review:
+    post:
+      tags: [memories]
+      summary: Approve / reject pending proposal
+      operationId: reviewMemory
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewMemoryRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewMemoryResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /memories/inbox:
+    get:
+      tags: [memories]
+      summary: List pending proposals
+      operationId: listInbox
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - in: query
+          name: assigned_to_me
+          schema: { type: boolean, default: true }
+        - in: query
+          name: reason
+          schema:
+            type: array
+            items: { type: string }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Proposal' }
+                  next_cursor:
+                    type: [string, "null"]
+
+  /context:
+    get:
+      tags: [context]
+      summary: Recall context (the read endpoint agents use most)
+      description: |
+        Возвращает кандидатов с разбивкой scores по signal'ам (vector / bm25 / graph) и фьюжен-скором.
+        Применяет ACL после retrieval. Можно требовать цитаты в ответ.
+      operationId: getContext
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - in: query
+          name: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 4096 }
+        - in: query
+          name: scopes
+          schema:
+            type: array
+            items: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+        - in: query
+          name: min_confidence
+          schema: { type: number, minimum: 0, maximum: 1, default: 0 }
+        - in: query
+          name: cite
+          schema: { type: boolean, default: true }
+        - in: query
+          name: include_body
+          schema: { type: boolean, default: false }
+        - in: query
+          name: time_window
+          schema: { type: string, description: ISO-8601 duration, например `P30D`. }
+        - in: query
+          name: types
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/FileType' }
+        - in: query
+          name: vector_weight
+          schema: { type: number, minimum: 0, maximum: 1, default: 0.7 }
+          description: Vector similarity weight for hybrid RRF fusion. Requires bm25_weight.
+        - in: query
+          name: bm25_weight
+          schema: { type: number, minimum: 0, maximum: 1, default: 0.3 }
+          description: BM25 keyword weight for hybrid RRF fusion. Requires vector_weight.
+        - in: query
+          name: recency_half_life_days
+          schema: { type: number, minimum: 0.1 }
+          description: Exponential decay half-life in days. Omit to disable recency boost.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContextResponse' }
+
+  /runs:
+    post:
+      tags: [runs]
+      summary: Start a run
+      operationId: startRun
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartRunRequest' }
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+
+  /runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: run_id
+        required: true
+        schema: { type: string, pattern: '^run_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+    get:
+      tags: [runs]
+      summary: Get a run
+      operationId: getRun
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [runs]
+      summary: Finish or update a run
+      operationId: finishRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FinishRunRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+
+  /entities:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+    post:
+      tags: [entities]
+      summary: Create entity
+      operationId: createEntity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEntityRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Entity' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /entities/{entity_id}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: entity_id
+        required: true
+        schema: { type: string, pattern: '^ent_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+    get:
+      tags: [entities]
+      summary: Get entity
+      operationId: getEntity
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Entity' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /entities/search:
+    post:
+      tags: [entities]
+      summary: Search entities (alias / canonical / fuzzy)
+      operationId: searchEntities
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EntitySearchRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Entity' }
+
+  /entities/{entity_id}/link:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: entity_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [entities]
+      summary: Create a graph edge
+      operationId: linkEntity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LinkEntityRequest' }
+      responses:
+        '201':
+          description: Edge created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Edge' }
+
+  /entities/{entity_id}/neighbors:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdHeader'
+      - in: path
+        name: entity_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [entities]
+      summary: Graph neighbors
+      operationId: getNeighbors
+      parameters:
+        - in: query
+          name: depth
+          schema: { type: integer, minimum: 1, maximum: 3, default: 1 }
+        - in: query
+          name: relations
+          schema:
+            type: array
+            items: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nodes, edges]
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: '#/components/schemas/Entity' }
+                  edges:
+                    type: array
+                    items: { $ref: '#/components/schemas/Edge' }
+
+  /admin/reindex:
+    post:
+      tags: [admin]
+      summary: Trigger reindex
+      operationId: triggerReindex
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              additionalProperties: false
+              properties:
+                scope:
+                  type: string
+                  enum: [all, vector, bm25, graph]
+                paths:
+                  type: array
+                  items: { type: string }
+                  description: Опциональное ограничение путями.
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id: { type: string }
+
+  /admin/migrate-schema:
+    post:
+      tags: [admin]
+      summary: Run schema migration
+      operationId: migrateSchema
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_version]
+              properties:
+                target_version: { $ref: 'schemas/v1/base.schema.json#/$defs/schema_version' }
+                dry_run: { type: boolean, default: false }
+      responses:
+        '202':
+          description: Migration started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id: { type: string }
+                  plan_url: { type: string }
+
+  /admin/health:
+    get:
+      tags: [admin]
+      summary: Liveness + readiness
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /admin/metrics:
+    get:
+      tags: [admin]
+      summary: Prometheus metrics
+      operationId: metrics
+      responses:
+        '200':
+          description: text/plain
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /admin/audit:
+    get:
+      tags: [admin]
+      summary: Audit log query
+      operationId: auditQuery
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceIdHeader'
+        - in: query
+          name: subject
+          schema: { type: string }
+        - in: query
+          name: action
+          schema: { type: string }
+        - in: query
+          name: since
+          schema: { type: string, format: date-time }
+        - in: query
+          name: until
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/AuditEntry' }
+                  next_cursor: { type: [string, "null"] }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: utk_/atk_
+
+  parameters:
+    WorkspaceIdHeader:
+      in: header
+      name: X-Workspace-Id
+      required: true
+      schema: { type: string, pattern: '^ws_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+
+    WorkspaceIdPath:
+      in: path
+      name: workspace_id
+      required: true
+      schema: { type: string, pattern: '^ws_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$' }
+
+    Cursor:
+      in: query
+      name: cursor
+      schema: { type: string }
+
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: false
+      schema: { type: string, minLength: 1, maxLength: 128 }
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Forbidden by ACL or policy
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Conflict (CONFLICT, SUPERSEDE_CYCLE, DUPLICATE)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PreconditionFailed:
+      description: Precondition failed (If-Match mismatch)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnprocessableEntity:
+      description: Validation or policy failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message, trace_id]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - NOT_FOUND
+            - CONFLICT
+            - SUPERSEDE_CYCLE
+            - DUPLICATE
+            - PRECONDITION_FAILED
+            - POLICY_REJECTED
+            - SENSITIVE_REQUIRES_REVIEW
+            - LOCKED
+            - RATE_LIMITED
+            - INTERNAL
+            - UNAVAILABLE
+        message: { type: string }
+        trace_id: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    Subject:
+      type: string
+      pattern: '^(user|agent|group|role):[A-Za-z0-9_\-\*]+$|^owner$|^anonymous$'
+
+    FileType:
+      type: string
+      enum: [memory, conversation, run, decision, entity, proposal, other]
+
+    IssueTokenRequest:
+      type: object
+      required: [kind, principal]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [user, agent] }
+        principal:
+          type: string
+          description: Имя пользователя или агента.
+        password:
+          type: string
+          description: Только для kind=user, при включённой password-аутентификации.
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 2592000
+          description: Для kind=agent максимум 604800 (7 дней) — см. ADR-005.
+
+    IssuedToken:
+      type: object
+      required: [token, expires_at, kind]
+      properties:
+        token:
+          type: string
+          description: Префикс utk_ для user, atk_ для agent.
+        expires_at: { type: string, format: date-time }
+        kind: { type: string, enum: [user, agent] }
+        principal: { type: string }
+
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        description: { type: string, maxLength: 4096 }
+        from_template: { type: string, description: 'Опциональный пресет: solo, team, agent-fleet.' }
+
+    Workspace:
+      type: object
+      required: [id, name, head_commit, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        head_commit: { type: string }
+        created_at: { type: string, format: date-time }
+        owner: { $ref: '#/components/schemas/Subject' }
+
+    CreateCommitRequest:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message: { type: string, minLength: 1, maxLength: 4096 }
+        parent_commit:
+          type: string
+          description: Если указан и не равен HEAD — 412.
+        signed_by:
+          type: array
+          items: { $ref: '#/components/schemas/Subject' }
+
+    Commit:
+      type: object
+      required: [hash, message, author, created_at, parents]
+      properties:
+        hash: { type: string, pattern: '^[a-f0-9]{64}$' }
+        message: { type: string }
+        author: { $ref: '#/components/schemas/Subject' }
+        created_at: { type: string, format: date-time }
+        parents:
+          type: array
+          items: { type: string, pattern: '^[a-f0-9]{64}$' }
+        files_changed:
+          type: array
+          items:
+            type: object
+            required: [path, change]
+            properties:
+              path: { type: string }
+              change: { type: string, enum: [added, modified, archived, restored] }
+              old_hash: { type: [string, "null"] }
+              new_hash: { type: [string, "null"] }
+        signed_by:
+          type: array
+          items: { $ref: '#/components/schemas/Subject' }
+
+    Diff:
+      type: object
+      required: [from, to, entries]
+      properties:
+        from: { type: string }
+        to: { type: string }
+        entries:
+          type: array
+          items:
+            type: object
+            required: [path, change]
+            properties:
+              path: { type: string }
+              change: { type: string, enum: [added, modified, archived, restored] }
+              hunks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    old_start: { type: integer }
+                    old_lines: { type: integer }
+                    new_start: { type: integer }
+                    new_lines: { type: integer }
+                    body: { type: string }
+
+    WriteFileRequest:
+      type: object
+      required: [content]
+      additionalProperties: false
+      properties:
+        content: { type: string, description: Полный markdown с фронтматтером. }
+        encoding: { type: string, enum: [utf-8], default: utf-8 }
+
+    StagedFile:
+      type: object
+      required: [path, staged_hash]
+      properties:
+        path: { type: string }
+        staged_hash: { type: string }
+        bytes: { type: integer }
+
+    FileContent:
+      type: object
+      required: [path, content, commit, hash]
+      properties:
+        path: { type: string }
+        content: { type: string }
+        commit: { type: string }
+        hash: { type: string }
+        type: { $ref: '#/components/schemas/FileType' }
+
+    FileSummary:
+      type: object
+      required: [path, type, size, hash]
+      properties:
+        path: { type: string }
+        type: { $ref: '#/components/schemas/FileType' }
+        size: { type: integer }
+        hash: { type: string }
+        updated_at: { type: string, format: date-time }
+        sensitivity:
+          type: string
+          enum: [normal, pii, secret, medical, legal, financial]
+
+    ProposeMemoryRequest:
+      type: object
+      required: [memory]
+      additionalProperties: false
+      properties:
+        memory:
+          $ref: '#/components/schemas/MemoryDraft'
+        run_id: { type: string }
+        idempotent_extraction_key:
+          type: string
+          description: Стабильный ключ от LLM-extractor'а для дедупа.
+
+    MemoryDraft:
+      description: |
+        Полная заявка на память. Сервер дополнит created_at, id, source_commit, run_id и валидирует
+        против `schemas/v1/memory.schema.json`. Sensitive-поля обязательны: sensitivity, confidence.
+      type: object
+      additionalProperties: true
+      required: [memory_type, scope, scope_id, content, sensitivity, confidence, provenance]
+      properties:
+        memory_type:
+          type: string
+          enum: [preference, fact, goal, skill, relationship, constraint, episodic]
+        scope: { type: string, enum: [user, agent, session, project, org] }
+        scope_id: { type: string }
+        content: { type: string, maxLength: 32768 }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        sensitivity:
+          type: string
+          enum: [normal, pii, secret, medical, legal, financial]
+        provenance:
+          type: object
+          required: [source_file, extracted_at]
+          properties:
+            source_file: { type: string }
+            source_commit: { type: string }
+            source_span: { type: object }
+            extractor: { type: string }
+            extracted_at: { type: string, format: date-time }
+            model_version: { type: string }
+            prompt_hash: { type: string }
+        entities:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { type: string }
+              role: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        expires_at: { type: [string, "null"], format: date-time }
+
+    ProposeMemoryResponse:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [auto_committed, pending_review, rejected]
+        memory_id: { type: [string, "null"] }
+        proposal_id: { type: [string, "null"] }
+        commit: { type: [string, "null"] }
+        review_required_reason:
+          type: array
+          items: { type: string }
+        rejection_reason: { type: [string, "null"] }
+
+    Memory:
+      description: Возвращаемое представление памяти. Frontmatter + body.
+      type: object
+      required: [id, frontmatter, body, path, commit]
+      properties:
+        id: { type: string }
+        path: { type: string }
+        commit: { type: string }
+        frontmatter:
+          type: object
+          additionalProperties: true
+        body: { type: string }
+
+    SupersedeRequest:
+      type: object
+      required: [new_memory, conflict_type, reason]
+      additionalProperties: false
+      properties:
+        new_memory: { $ref: '#/components/schemas/MemoryDraft' }
+        conflict_type:
+          type: string
+          enum: [update, contradiction, merge]
+        reason: { type: string, maxLength: 1024 }
+
+    SearchRequest:
+      type: object
+      required: [query]
+      additionalProperties: false
+      properties:
+        query: { type: string, minLength: 1, maxLength: 4096 }
+        scopes:
+          type: array
+          items: { type: string }
+        types:
+          type: array
+          items: { $ref: '#/components/schemas/FileType' }
+        signals:
+          type: array
+          items: { type: string, enum: [vector, bm25, graph] }
+          uniqueItems: true
+        limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+        min_confidence: { type: number, minimum: 0, maximum: 1, default: 0 }
+        time_window: { type: string, description: 'ISO-8601 duration' }
+
+    SearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalCandidate' }
+
+    RetrievalCandidate:
+      type: object
+      required: [path, score, scores, type]
+      properties:
+        path: { type: string }
+        type: { $ref: '#/components/schemas/FileType' }
+        score: { type: number }
+        scores:
+          type: object
+          properties:
+            vector: { type: [number, "null"] }
+            bm25: { type: [number, "null"] }
+            graph: { type: [number, "null"] }
+            recency: { type: [number, "null"] }
+        excerpt: { type: string }
+        body: { type: [string, "null"] }
+        memory_id: { type: [string, "null"] }
+        commit: { type: string }
+        sensitivity: { type: string }
+        confidence: { type: [number, "null"] }
+        cite:
+          type: object
+          properties:
+            file: { type: string }
+            heading_path:
+              type: array
+              items: { type: string }
+            commit: { type: string }
+            span:
+              type: object
+              properties:
+                start_line: { type: integer }
+                end_line: { type: integer }
+
+    ContextResponse:
+      type: object
+      required: [items, query, applied_filters]
+      properties:
+        query: { type: string }
+        applied_filters:
+          type: object
+          additionalProperties: true
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RetrievalCandidate' }
+
+    ReviewMemoryRequest:
+      type: object
+      required: [proposal_id, decision]
+      additionalProperties: false
+      properties:
+        proposal_id: { type: string }
+        decision: { type: string, enum: [approved, rejected, needs_changes] }
+        reason: { type: string, maxLength: 2048 }
+        edits:
+          $ref: '#/components/schemas/MemoryDraft'
+
+    ReviewMemoryResponse:
+      type: object
+      required: [proposal_id, status]
+      properties:
+        proposal_id: { type: string }
+        status: { type: string, enum: [approved, rejected, needs_changes] }
+        memory_id: { type: [string, "null"] }
+        commit: { type: [string, "null"] }
+
+    Proposal:
+      type: object
+      required: [id, status, frontmatter]
+      properties:
+        id: { type: string }
+        status: { type: string }
+        frontmatter:
+          type: object
+          additionalProperties: true
+        body: { type: string }
+        path: { type: string }
+
+    StartRunRequest:
+      type: object
+      required: [agent, trigger]
+      additionalProperties: false
+      properties:
+        agent: { type: string, pattern: '^agent:[A-Za-z0-9_\-]+$' }
+        session_id: { type: string }
+        trigger:
+          type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [user_request, scheduled, agent_call, webhook, test] }
+            by: { $ref: '#/components/schemas/Subject' }
+            ref: { type: string }
+        model: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    FinishRunRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [succeeded, failed, cancelled, timeout] }
+        finished_at: { type: string, format: date-time }
+        artifacts:
+          type: object
+          additionalProperties: true
+        metrics:
+          type: object
+          additionalProperties: true
+        error: { type: string }
+        proposed_memories:
+          type: array
+          items: { type: string }
+
+    Run:
+      type: object
+      required: [id, agent, status, started_at]
+      properties:
+        id: { type: string }
+        agent: { type: string }
+        session_id: { type: string }
+        status: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        trigger:
+          type: object
+          additionalProperties: true
+        artifacts:
+          type: object
+          additionalProperties: true
+        metrics:
+          type: object
+          additionalProperties: true
+        proposed_memories:
+          type: array
+          items: { type: string }
+
+    CreateEntityRequest:
+      type: object
+      required: [entity_kind, canonical_name]
+      additionalProperties: false
+      properties:
+        entity_kind: { type: string, enum: [person, project, tool, concept, site, org] }
+        canonical_name: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+        external_refs:
+          type: array
+          items:
+            type: object
+            required: [system, id]
+            properties:
+              system: { type: string }
+              id: { type: string }
+        sensitivity: { type: string }
+
+    Entity:
+      type: object
+      required: [id, entity_kind, canonical_name]
+      properties:
+        id: { type: string }
+        entity_kind: { type: string }
+        canonical_name: { type: string }
+        aliases:
+          type: array
+          items: { type: string }
+        attributes:
+          type: object
+          additionalProperties: true
+        path: { type: string }
+
+    EntitySearchRequest:
+      type: object
+      required: [query]
+      additionalProperties: false
+      properties:
+        query: { type: string }
+        kinds:
+          type: array
+          items: { type: string }
+        limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+
+    LinkEntityRequest:
+      type: object
+      required: [target, relation]
+      additionalProperties: false
+      properties:
+        target: { type: string, description: 'ent_<ULID>' }
+        relation:
+          type: string
+          enum:
+            - PREFERS
+            - AVOIDS
+            - USES
+            - KNOWS
+            - OWNS
+            - MEMBER_OF
+            - WROTE
+            - REVIEWED
+            - DERIVED_FROM
+            - MENTIONS
+            - REFERENCES
+            - SUPERSEDES
+            - CONFLICTS_WITH
+            - RELATES_TO
+            - PRODUCED
+            - CONSUMED
+        weight: { type: number, minimum: 0, maximum: 1, default: 1 }
+        reason: { type: string, maxLength: 1024 }
+
+    Edge:
+      type: object
+      required: [src, dst, relation]
+      properties:
+        src: { type: string }
+        dst: { type: string }
+        relation: { type: string }
+        weight: { type: number }
+        provenance_commit: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, enum: [ok, degraded, down] }
+        version: { type: string }
+        components:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, degraded, down]
+        lag_seconds:
+          type: object
+          properties:
+            indexer: { type: number }
+            extractor: { type: number }
+
+    AuditEntry:
+      type: object
+      required: [id, ts, kind, subject]
+      properties:
+        id: { type: string }
+        ts: { type: string, format: date-time }
+        kind: { type: string }
+        subject: { type: string }
+        workspace: { type: string }
+        action: { type: string }
+        target: { type: string }
+        result: { type: string, enum: [allowed, denied, error] }
+        trace_id: { type: string }
+        payload:
+          type: object
+          additionalProperties: true

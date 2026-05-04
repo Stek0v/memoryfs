@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/entity.schema.json",
+  "title": "MemoryFS Entity Frontmatter",
+  "description": "Узел графа: человек, проект, инструмент, концепт, организация, сайт. Атрибуты типизированы по entity_kind.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "entity_kind",
+    "canonical_name",
+    "created_at",
+    "author",
+    "permissions"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_entity" },
+    "type": { "const": "entity" },
+    "entity_kind": {
+      "type": "string",
+      "enum": ["person", "project", "tool", "concept", "site", "org"]
+    },
+    "canonical_name": {
+      "description": "Каноничное имя для отображения. Не используется как ключ — связи всегда по id.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 256 },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "created_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "updated_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "author": { "$ref": "base.schema.json#/$defs/author" },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "provenance": { "$ref": "base.schema.json#/$defs/provenance" },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "sensitivity": { "$ref": "base.schema.json#/$defs/sensitivity" },
+    "scope": { "$ref": "base.schema.json#/$defs/scope" },
+    "scope_id": {
+      "type": "string",
+      "pattern": "^(user|agent|session|project|org):[A-Za-z0-9_\\-]+$"
+    },
+    "merged_into": {
+      "description": "Если entity была слита с другой — ссылка на каноническую.",
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/id_entity" },
+        { "type": "null" }
+      ]
+    },
+    "attributes": {
+      "description": "Свободная карта типизированных атрибутов. Конкретные ключи по соглашению — см. EXAMPLES в /docs/entities.md.",
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string", "maxLength": 4096 },
+          { "type": "number" },
+          { "type": "integer" },
+          { "type": "boolean" },
+          { "type": "null" },
+          {
+            "type": "array",
+            "items": { "type": ["string", "number", "integer", "boolean"] },
+            "maxItems": 256
+          }
+        ]
+      }
+    },
+    "external_refs": {
+      "description": "Ссылки на внешние ID: github username, домен, email-домен.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["system", "id"],
+        "properties": {
+          "system": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      },
+      "maxItems": 32
+    }
+  }
+}

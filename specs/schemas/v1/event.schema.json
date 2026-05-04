@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/event.schema.json",
+  "title": "MemoryFS Event Log Entry",
+  "description": "Одна запись в NDJSON event/audit log. Append-only, fsync_per_event=true по умолчанию. Опционально tamper_evident hash chain (ADR-011).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "ts",
+    "kind",
+    "subject",
+    "workspace_id",
+    "trace_id"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_event" },
+    "ts": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "kind": {
+      "description": "Категория события. Categorial enum, расширяется через minor bump.",
+      "type": "string",
+      "enum": [
+        "auth.token_issued",
+        "auth.token_revoked",
+        "auth.login_failed",
+        "workspace.created",
+        "workspace.head_advanced",
+        "file.read",
+        "file.staged",
+        "file.archived",
+        "commit.created",
+        "commit.reverted",
+        "memory.proposed",
+        "memory.auto_committed",
+        "memory.review_requested",
+        "memory.approved",
+        "memory.rejected",
+        "memory.superseded",
+        "memory.expired",
+        "run.started",
+        "run.finished",
+        "entity.created",
+        "entity.linked",
+        "entity.merged",
+        "policy.changed",
+        "redaction.applied",
+        "redaction.failed_closed",
+        "index.reindex_started",
+        "index.reindex_completed",
+        "index.lag_warning",
+        "schema.migration_started",
+        "schema.migration_completed",
+        "rate_limit.hit",
+        "acl.denied",
+        "audit.chain_verified",
+        "audit.chain_broken",
+        "system.startup",
+        "system.shutdown",
+        "system.degraded"
+      ]
+    },
+    "subject": {
+      "description": "Кто инициировал событие. Для system-событий — `system:<component>`.",
+      "type": "string",
+      "pattern": "^(user|agent|system|service):[A-Za-z0-9_\\-]+$|^anonymous$"
+    },
+    "workspace_id": { "$ref": "base.schema.json#/$defs/id_workspace" },
+    "trace_id": {
+      "description": "Сквозной trace ID. Для запросов через REST/MCP — сгенерирован gateway. Для system-событий — UUID.",
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_\\-]+$"
+    },
+    "span_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_\\-]+$"
+    },
+    "parent_span_id": {
+      "oneOf": [
+        { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        { "type": "null" }
+      ]
+    },
+    "action": {
+      "description": "Машинное имя действия для агрегаций (например, `commit.created` → `commit.create`).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+      "maxLength": 128
+    },
+    "target": {
+      "description": "Объект действия. Свободная строка: путь, ULID, иное стабильное имя.",
+      "type": "string",
+      "maxLength": 1024
+    },
+    "result": {
+      "type": "string",
+      "enum": ["allowed", "denied", "error", "ok"]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ip": {
+      "description": "IP-адрес инициатора. Для local-mode опускается. Для team-server — обязательное поле в auth.* и acl.denied событиях.",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "user_agent": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "commit": { "$ref": "base.schema.json#/$defs/commit_hash" },
+    "payload": {
+      "description": "Произвольный context. Не содержит секретов: проходит через redactor с теми же правилами, что и conversation. Размер ограничен 16KB.",
+      "type": "object",
+      "additionalProperties": true,
+      "maxProperties": 64
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string", "maxLength": 64 },
+        "message": { "type": "string", "maxLength": 4096 },
+        "stack_hash": {
+          "description": "sha256 от стектрейса для дедупа алертов; сам стектрейс не пишется в audit.",
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "prev_hash": {
+      "description": "sha256 предыдущей записи в hash chain. NULL только для самой первой записи в файле/сегменте.",
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        { "type": "null" }
+      ]
+    },
+    "self_hash": {
+      "description": "sha256 канонической формы данной записи (без поля self_hash). Опционально, только при tamper_evident=true.",
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "description": "ACL denied и auth.* события обязаны иметь ip в team-режиме (поле обязательно если присутствует — валидируется на этапе записи логгером).",
+      "if": {
+        "properties": {
+          "kind": { "enum": ["acl.denied", "auth.login_failed", "auth.token_issued", "auth.token_revoked"] }
+        }
+      },
+      "then": {
+        "anyOf": [
+          { "required": ["ip"] },
+          { "properties": { "subject": { "pattern": "^system:" } } }
+        ]
+      }
+    },
+    {
+      "description": "Если kind содержит .failed/.error — должен быть error блок.",
+      "if": {
+        "properties": {
+          "result": { "const": "error" }
+        }
+      },
+      "then": { "required": ["error"] }
+    },
+    {
+      "description": "tamper_evident: если есть self_hash, должен быть и prev_hash (или null для первой записи).",
+      "if": { "required": ["self_hash"] },
+      "then": { "required": ["prev_hash"] }
+    }
+  ]
+}

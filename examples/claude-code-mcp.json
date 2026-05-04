@@ -1,0 +1,14 @@
+{
+  "_comment": "Drop-in MCP server config for Claude Code. Equivalent to: claude mcp add memoryfs --scope user -- memoryfs mcp",
+  "mcpServers": {
+    "memoryfs": {
+      "command": "memoryfs",
+      "args": ["mcp"],
+      "env": {
+        "_MEMORYFS_DATA_DIR": "/optional/override/path",
+        "_MEMORYFS_WORKSPACE_ID": "optional override; default derived from project path",
+        "_MEMORYFS_TOKEN": "optional override; default utk_<USER>"
+      }
+    }
+  }
+}

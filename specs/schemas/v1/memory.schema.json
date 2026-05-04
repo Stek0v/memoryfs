@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/memory.schema.json",
+  "title": "MemoryFS Memory Frontmatter",
+  "description": "Схема фронтматтера файла-памяти. Append-only: изменения через supersedes/superseded_by.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "memory_type",
+    "scope",
+    "scope_id",
+    "created_at",
+    "author",
+    "permissions",
+    "provenance",
+    "confidence",
+    "status",
+    "sensitivity"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_memory" },
+    "type": { "const": "memory" },
+    "memory_type": {
+      "description": "Категория памяти. Влияет на retrieval-stratу и политику истечения.",
+      "type": "string",
+      "enum": [
+        "preference",
+        "fact",
+        "goal",
+        "skill",
+        "relationship",
+        "constraint",
+        "episodic"
+      ]
+    },
+    "scope": { "$ref": "base.schema.json#/$defs/scope" },
+    "scope_id": {
+      "description": "ID носителя scope: `user:<id>`, `agent:<name>`, `session:<id>`, `project:<id>`, `org:<id>`.",
+      "type": "string",
+      "pattern": "^(user|agent|session|project|org):[A-Za-z0-9_\\-]+$"
+    },
+    "created_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "updated_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "author": { "$ref": "base.schema.json#/$defs/author" },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "provenance": { "$ref": "base.schema.json#/$defs/provenance" },
+    "confidence": {
+      "description": "Уверенность извлекателя [0..1]. Значения <0.6 требуют review для всех sensitivity != normal и для scope=org.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "superseded", "archived", "disputed"]
+    },
+    "supersedes": {
+      "description": "Список ID памятей, которые это воспоминание заменяет. Запрещены циклы.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_memory" },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "superseded_by": {
+      "description": "Список ID памятей, которые заменили это воспоминание. Должен быть пуст при status=active.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_memory" },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "conflict_type": {
+      "description": "Если запись supersede'ит существующую — характер конфликта.",
+      "type": "string",
+      "enum": ["none", "update", "contradiction", "merge"],
+      "default": "none"
+    },
+    "entities": {
+      "description": "Сущности, на которые ссылается воспоминание. Только по ID.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/entity_ref" },
+      "maxItems": 32
+    },
+    "sensitivity": { "$ref": "base.schema.json#/$defs/sensitivity" },
+    "expires_at": {
+      "description": "Опциональный момент истечения. Применимо в первую очередь к memory_type=episodic и goal.",
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "review_status": {
+      "type": "string",
+      "enum": ["not_required", "pending", "approved", "rejected"],
+      "default": "not_required"
+    },
+    "reviewed_by": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/author" },
+        { "type": "null" }
+      ]
+    },
+    "reviewed_at": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "review_decision_reason": {
+      "type": "string",
+      "maxLength": 1024
+    }
+  },
+  "allOf": [
+    {
+      "description": "active не может одновременно иметь superseded_by",
+      "if": { "properties": { "status": { "const": "active" } } },
+      "then": {
+        "properties": {
+          "superseded_by": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "description": "superseded должен иметь хотя бы один superseded_by",
+      "if": { "properties": { "status": { "const": "superseded" } } },
+      "then": {
+        "required": ["superseded_by"],
+        "properties": {
+          "superseded_by": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "description": "Sensitive-памяти не могут быть auto-committed без review",
+      "if": {
+        "properties": {
+          "sensitivity": {
+            "enum": ["pii", "secret", "medical", "legal", "financial"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "review_status": {
+            "enum": ["pending", "approved", "rejected"]
+          }
+        }
+      }
+    }
+  ]
+}

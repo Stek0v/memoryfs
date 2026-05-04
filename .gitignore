@@ -1,0 +1,21 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Local data dirs that may be created during dev
+/.memory/
+/data/
+*.log
+
+# Generated
+*.pyc
+__pycache__/

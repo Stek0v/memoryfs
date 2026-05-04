@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/run.schema.json",
+  "title": "MemoryFS Run Frontmatter",
+  "description": "Запись одного запуска агента: prompt, tool calls, результат, предложенные памяти. Лежит в runs/<run_id>/index.md, артефакты — рядом.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "agent",
+    "started_at",
+    "trigger",
+    "author",
+    "permissions",
+    "status"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_run" },
+    "type": { "const": "run" },
+    "agent": {
+      "description": "Имя агента в формате `agent:<slug>`.",
+      "type": "string",
+      "pattern": "^agent:[A-Za-z0-9_\\-]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_\\-]{1,64}$"
+    },
+    "started_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "finished_at": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "trigger": {
+      "description": "Кто/что инициировал запуск.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["user_request", "scheduled", "agent_call", "webhook", "test"]
+        },
+        "by": {
+          "oneOf": [
+            { "$ref": "base.schema.json#/$defs/author" },
+            { "type": "null" }
+          ]
+        },
+        "ref": {
+          "description": "Произвольная ссылка на источник: cron-id, parent-run-id, webhook-id и т.п.",
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "author": { "$ref": "base.schema.json#/$defs/author" },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "status": {
+      "type": "string",
+      "enum": ["running", "succeeded", "failed", "cancelled", "timeout"]
+    },
+    "artifacts": {
+      "description": "Пути к файлам артефактов внутри runs/<run_id>/. Все пути относительны корня workspace.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prompt":      { "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.md$" },
+        "tool_calls":  { "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.(md|jsonl)$" },
+        "stdout":      { "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.(md|log)$" },
+        "stderr":      { "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.(md|log)$" },
+        "result":      { "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.md$" },
+        "memory_patch":{ "type": "string", "pattern": "^runs/[A-Za-z0-9_\\-/]+\\.(md|patch)$" }
+      }
+    },
+    "metrics": {
+      "description": "Численные метрики запуска. Все поля опциональны.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms":     { "type": "integer", "minimum": 0 },
+        "tokens_input":    { "type": "integer", "minimum": 0 },
+        "tokens_output":   { "type": "integer", "minimum": 0 },
+        "tool_calls":      { "type": "integer", "minimum": 0 },
+        "memories_proposed": { "type": "integer", "minimum": 0 },
+        "memories_committed": { "type": "integer", "minimum": 0 },
+        "cost_usd":        { "type": "number", "minimum": 0 }
+      }
+    },
+    "model": {
+      "description": "Модель, использованная агентом. Свободная строка, например `anthropic/claude-opus-4-7`.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "proposed_memories": {
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_proposal" },
+      "uniqueItems": true,
+      "maxItems": 1024
+    },
+    "consumed_memories": {
+      "description": "Памяти, прочитанные агентом во время run (для аналитики и audit).",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_memory" },
+      "uniqueItems": true,
+      "maxItems": 4096
+    },
+    "consumed_files": {
+      "description": "Файлы workspace, прочитанные агентом во время run.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9_./\\-]+$"
+      },
+      "uniqueItems": true,
+      "maxItems": 1024
+    },
+    "error": {
+      "description": "Текст ошибки при status в (failed|timeout|cancelled).",
+      "type": "string",
+      "maxLength": 8192
+    }
+  },
+  "allOf": [
+    {
+      "description": "Завершённый run обязан иметь finished_at.",
+      "if": {
+        "properties": {
+          "status": { "enum": ["succeeded", "failed", "cancelled", "timeout"] }
+        }
+      },
+      "then": { "required": ["finished_at"] }
+    },
+    {
+      "description": "Failed/timeout — желательно error.",
+      "if": {
+        "properties": {
+          "status": { "enum": ["failed", "timeout"] }
+        }
+      },
+      "then": { "required": ["error"] }
+    }
+  ]
+}

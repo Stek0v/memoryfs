@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/policy.schema.json",
+  "title": "MemoryFS Workspace Policy",
+  "description": "Конфигурация workspace в .memoryfs/policy.yaml. Определяет глобальные правила: ACL, redaction, review, retention, индексация.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "default_acl", "redaction", "review", "indexing"],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "workspace_id": { "$ref": "base.schema.json#/$defs/id_workspace" },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "default_acl": {
+      "description": "Глобальные права. Per-file permissions не могут быть шире этих.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deny_by_default"],
+      "properties": {
+        "deny_by_default": { "type": "boolean", "const": true },
+        "allow": {
+          "description": "Разрешения по glob-путям. Применяются в порядке: deny > allow.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "subjects", "actions"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "subjects": {
+                "type": "array",
+                "items": { "$ref": "base.schema.json#/$defs/subject_pattern" },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["read", "write", "review", "commit", "revert", "list"]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            }
+          }
+        },
+        "deny": {
+          "description": "Жёсткие запреты. Перекрывают allow.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "subjects"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+              "subjects": {
+                "type": "array",
+                "items": { "$ref": "base.schema.json#/$defs/subject_pattern" },
+                "minItems": 1,
+                "uniqueItems": true
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["read", "write", "review", "commit", "revert", "list"]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "redaction": {
+      "description": "Pre-redaction секретов и PII перед записью conversation/files.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "password",
+              "token",
+              "ssh_key",
+              "pem",
+              "jwt",
+              "credit_card",
+              "iban",
+              "ssn",
+              "email",
+              "phone",
+              "address",
+              "name",
+              "ip_address",
+              "high_entropy"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "high_entropy_threshold_bits": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8,
+          "default": 4.5
+        },
+        "fail_closed": {
+          "description": "Если редактор не уверен, лучше отказать в записи, чем пропустить секрет.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "review": {
+      "description": "Когда требуется human-in-the-loop review предлагаемой памяти.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sensitive_requires_review"],
+      "properties": {
+        "sensitive_requires_review": {
+          "description": "Sensitivity-уровни, требующие review. По умолчанию — все, кроме normal.",
+          "type": "array",
+          "items": { "$ref": "base.schema.json#/$defs/sensitivity" },
+          "uniqueItems": true,
+          "default": ["pii", "secret", "medical", "legal", "financial"]
+        },
+        "low_confidence_threshold": {
+          "description": "Confidence < threshold → review даже для normal.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.6
+        },
+        "scope_org_requires_review": { "type": "boolean", "default": true },
+        "reviewer_must_differ_from_author": { "type": "boolean", "default": true },
+        "review_ttl_hours": {
+          "description": "Через сколько часов pending → expired.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 168
+        }
+      }
+    },
+    "indexing": {
+      "description": "Параметры derived-индексов.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vector_store", "embedding_model"],
+      "properties": {
+        "vector_store": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["qdrant", "lancedb", "pgvector"] },
+            "url": { "type": "string", "format": "uri" },
+            "collection": { "type": "string", "maxLength": 128 }
+          }
+        },
+        "embedding_model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "name"],
+          "properties": {
+            "provider": { "type": "string", "enum": ["openai", "anthropic", "voyage", "cohere", "local"] },
+            "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "dim": { "type": "integer", "minimum": 64, "maximum": 8192 }
+          }
+        },
+        "exclude_sensitivity": {
+          "description": "Sensitivity-уровни, которые не индексируются (только локальный полнотекст по выбору).",
+          "type": "array",
+          "items": { "$ref": "base.schema.json#/$defs/sensitivity" },
+          "default": ["secret"],
+          "uniqueItems": true
+        },
+        "chunk": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_tokens": { "type": "integer", "minimum": 64, "maximum": 4096, "default": 512 },
+            "overlap_tokens": { "type": "integer", "minimum": 0, "maximum": 1024, "default": 64 },
+            "respect_headings": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "retention": {
+      "description": "Политики хранения.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "episodic_default_ttl_days": { "type": "integer", "minimum": 1, "default": 90 },
+        "archive_after_superseded_days": { "type": "integer", "minimum": 0, "default": 30 },
+        "audit_log_retention_days": { "type": "integer", "minimum": 30, "default": 365 }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "model": { "type": "string", "maxLength": 128 },
+        "max_memories_per_conversation": { "type": "integer", "minimum": 1, "default": 32 },
+        "min_confidence_to_propose": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.4 },
+        "languages": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tamper_evident": { "type": "boolean", "default": false },
+        "fsync_per_event": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

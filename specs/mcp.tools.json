@@ -1,0 +1,443 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/specs/mcp.tools.json",
+  "title": "MemoryFS MCP Tool Definitions",
+  "version": "1.0.0-draft",
+  "description": "Spec инструментов MCP-сервера MemoryFS. Транспорты: stdio (по умолчанию для CLI) и sse (для серверных режимов). Каждый tool имеет имя с префиксом memoryfs_, человекочитаемое описание, JSON Schema для inputSchema. Все tools — read- или write-, write-tools обязаны принимать workspace_id и поддерживать idempotency_key.",
+  "transport": ["stdio", "sse"],
+  "auth": {
+    "scheme": "bearer",
+    "token_prefix": ["utk_", "atk_"],
+    "header": "Authorization",
+    "workspace_header": "X-Workspace-Id",
+    "notes": "Для stdio токен и workspace_id передаются через переменные окружения MEMORYFS_TOKEN и MEMORYFS_WORKSPACE_ID."
+  },
+  "common_definitions": {
+    "ulid": {
+      "type": "string",
+      "pattern": "^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$"
+    },
+    "memory_id": {
+      "type": "string",
+      "pattern": "^mem_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$"
+    },
+    "entity_id": {
+      "type": "string",
+      "pattern": "^ent_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$"
+    },
+    "workspace_id": {
+      "type": "string",
+      "pattern": "^ws_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$"
+    },
+    "commit_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "path": {
+      "description": "Относительный путь внутри workspace. Запрещены `..` и абсолютные пути.",
+      "type": "string",
+      "pattern": "^(?!/)(?!.*\\.\\.)[A-Za-z0-9_./\\-]+$",
+      "maxLength": 1024
+    },
+    "sensitivity": {
+      "type": "string",
+      "enum": ["normal", "pii", "secret", "medical", "legal", "financial"]
+    }
+  },
+  "tools": [
+    {
+      "name": "memoryfs_read_file",
+      "description": "Прочитать файл рабочей области в HEAD или по конкретному коммиту. Возвращает фронтматтер + body. Применяет ACL чтения.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path"],
+        "properties": {
+          "path": { "$ref": "#/common_definitions/path" },
+          "at_commit": { "$ref": "#/common_definitions/commit_hash" },
+          "include_body": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_write_file",
+      "description": "Записать файл в staging. Не публикует изменения — нужен последующий memoryfs_commit. Поддерживает If-Match для optimistic concurrency.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {
+          "path": { "$ref": "#/common_definitions/path" },
+          "content": { "type": "string", "description": "Полный markdown с YAML-фронтматтером.", "maxLength": 10485760 },
+          "if_match_commit": { "$ref": "#/common_definitions/commit_hash" }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_list_files",
+      "description": "Перечислить файлы по префиксу/типу. Применяет ACL list.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "prefix": { "type": "string", "maxLength": 1024 },
+          "type": {
+            "type": "string",
+            "enum": ["memory", "conversation", "run", "decision", "entity", "proposal", "other"]
+          },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+          "cursor": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_search",
+      "description": "Гибридный поиск (vector + BM25 + graph) по файлам workspace. Возвращает кандидатов с scores breakdown. Не предназначен для финального чтения — для контекста используй memoryfs_recall.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "scopes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "types": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["memory", "conversation", "run", "decision", "entity"] },
+            "uniqueItems": true
+          },
+          "signals": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["vector", "bm25", "graph"] },
+            "uniqueItems": true
+          },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 },
+          "min_confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 0 },
+          "time_window": { "type": "string", "description": "ISO-8601 duration, например `P30D`." }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_recall",
+      "description": "Сборка контекста для агента: гибридный поиск → ACL-фильтр → детерминированное чтение → опциональные цитаты. Это `read-path` по умолчанию для агентов.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "scopes": { "type": "array", "items": { "type": "string" } },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 8 },
+          "min_confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 0 },
+          "cite": { "type": "boolean", "default": true },
+          "include_body": { "type": "boolean", "default": false },
+          "time_window": { "type": "string" },
+          "types": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["memory", "conversation", "decision", "entity", "run"] }
+          }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_remember",
+      "description": "Создать sensitivity:normal память напрямую (минуя extraction-pipeline). Если памятка попадает в sensitive scope или confidence низкий — будет автоматически отправлена в review через memoryfs_propose_memory_patch. Используй когда у агента есть структурированный факт.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["memory_type", "scope", "scope_id", "content", "confidence", "provenance"],
+        "properties": {
+          "memory_type": {
+            "type": "string",
+            "enum": ["preference", "fact", "goal", "skill", "relationship", "constraint", "episodic"]
+          },
+          "scope": { "type": "string", "enum": ["user", "agent", "session", "project", "org"] },
+          "scope_id": { "type": "string" },
+          "content": { "type": "string", "minLength": 1, "maxLength": 32768 },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "sensitivity": { "$ref": "#/common_definitions/sensitivity", "default": "normal" },
+          "provenance": {
+            "type": "object",
+            "required": ["source_file", "extracted_at"],
+            "properties": {
+              "source_file": { "type": "string" },
+              "source_commit": { "$ref": "#/common_definitions/commit_hash" },
+              "source_span": { "type": "object" },
+              "extractor": { "type": "string" },
+              "extracted_at": { "type": "string", "format": "date-time" },
+              "model_version": { "type": "string" },
+              "prompt_hash": { "type": "string" }
+            }
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": { "$ref": "#/common_definitions/entity_id" },
+                "role": { "type": "string" }
+              }
+            }
+          },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "expires_at": { "type": ["string", "null"], "format": "date-time" },
+          "idempotency_key": { "type": "string", "maxLength": 128 }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_propose_memory_patch",
+      "description": "Предложить новую/изменённую память. Если попадает в sensitive класс или конфликтует с существующими — уйдёт в inbox для review. Это рекомендуемый путь для LLM-extractor'ов.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["memory"],
+        "properties": {
+          "memory": {
+            "$ref": "#/tools/5/inputSchema",
+            "description": "Та же форма, что у memoryfs_remember."
+          },
+          "run_id": { "$ref": "#/common_definitions/run_id" },
+          "supersede_target": { "$ref": "#/common_definitions/memory_id" },
+          "conflict_type": { "type": "string", "enum": ["update", "contradiction", "merge", "none"], "default": "none" },
+          "idempotency_key": { "type": "string", "maxLength": 128 }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_review_memory",
+      "description": "Approve/reject pending proposal в inbox. Только для тех, кто имеет review-права в policy для соответствующего scope.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["proposal_id", "decision"],
+        "properties": {
+          "proposal_id": { "type": "string", "pattern": "^prp_[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$" },
+          "decision": { "type": "string", "enum": ["approved", "rejected", "needs_changes"] },
+          "reason": { "type": "string", "maxLength": 2048 },
+          "edits": {
+            "type": "object",
+            "description": "Опциональные правки фронтматтера/контента перед approve."
+          }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_supersede_memory",
+      "description": "Создать новую память, заменяющую существующую. Старая получает status=superseded и superseded_by=<new_id>. Циклы запрещены.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_memory_id", "new_memory", "conflict_type", "reason"],
+        "properties": {
+          "target_memory_id": { "$ref": "#/common_definitions/memory_id" },
+          "new_memory": { "type": "object" },
+          "conflict_type": { "type": "string", "enum": ["update", "contradiction", "merge"] },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "idempotency_key": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_commit",
+      "description": "Опубликовать staged изменения как один атомарный коммит. Если parent не равен HEAD — 412 PreconditionFailed.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+          "parent_commit": { "$ref": "#/common_definitions/commit_hash" },
+          "idempotency_key": { "type": "string", "maxLength": 128 }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_revert",
+      "description": "Forward-only откат. Создаёт новый коммит, восстанавливающий состояние target. История не переписывается.",
+      "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_commit", "reason"],
+        "properties": {
+          "target_commit": { "$ref": "#/common_definitions/commit_hash" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
+          "paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_create_run",
+      "description": "Зарегистрировать начало запуска агента. Возвращает run_id, который должен прокидываться в provenance создаваемых памятей.",
+      "annotations": { "readOnlyHint": false, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent", "trigger"],
+        "properties": {
+          "agent": { "type": "string", "pattern": "^agent:[A-Za-z0-9_\\-]+$" },
+          "session_id": { "type": "string" },
+          "model": { "type": "string" },
+          "trigger": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["user_request", "scheduled", "agent_call", "webhook", "test"] },
+              "by": { "type": "string" },
+              "ref": { "type": "string" }
+            }
+          },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "idempotency_key": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_finish_run",
+      "description": "Закрыть run, прикрепив артефакты, метрики и список proposed_memories.",
+      "annotations": { "readOnlyHint": false, "idempotentHint": false },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "status"],
+        "properties": {
+          "run_id": { "$ref": "#/common_definitions/run_id" },
+          "status": { "type": "string", "enum": ["succeeded", "failed", "cancelled", "timeout"] },
+          "artifacts": {
+            "type": "object",
+            "properties": {
+              "prompt": { "type": "string" },
+              "tool_calls": { "type": "string" },
+              "stdout": { "type": "string" },
+              "stderr": { "type": "string" },
+              "result": { "type": "string" },
+              "memory_patch": { "type": "string" }
+            }
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": { "type": ["number", "integer"] }
+          },
+          "error": { "type": "string", "maxLength": 8192 },
+          "proposed_memories": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_link_entity",
+      "description": "Создать ребро в графе сущностей. Имена не используются как ключи — связи всегда по id.",
+      "annotations": { "readOnlyHint": false, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["src", "dst", "relation"],
+        "properties": {
+          "src": { "$ref": "#/common_definitions/entity_id" },
+          "dst": { "$ref": "#/common_definitions/entity_id" },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "PREFERS", "AVOIDS", "USES", "KNOWS", "OWNS", "MEMBER_OF",
+              "WROTE", "REVIEWED", "DERIVED_FROM", "MENTIONS", "REFERENCES",
+              "SUPERSEDES", "CONFLICTS_WITH", "RELATES_TO", "PRODUCED", "CONSUMED"
+            ]
+          },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 },
+          "reason": { "type": "string", "maxLength": 1024 }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_get_provenance",
+      "description": "Получить полное происхождение памяти: исходный файл, span, run_id, экстрактор, версия модели, prompt-hash, цепочка supersedes.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["memory_id"],
+        "properties": {
+          "memory_id": { "$ref": "#/common_definitions/memory_id" },
+          "include_chain": { "type": "boolean", "default": true }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_log",
+      "description": "История коммитов с фильтрами. По умолчанию — HEAD..back, 50 записей.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "author": { "type": "string" },
+          "since": { "type": "string", "format": "date-time" },
+          "until": { "type": "string", "format": "date-time" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 },
+          "cursor": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "memoryfs_diff",
+      "description": "Diff между двумя коммитами. Возвращает в формате json (по умолчанию) или unified.",
+      "annotations": { "readOnlyHint": true, "idempotentHint": true },
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to"],
+        "properties": {
+          "from": { "$ref": "#/common_definitions/commit_hash" },
+          "to": { "$ref": "#/common_definitions/commit_hash" },
+          "path": { "type": "string" },
+          "format": { "type": "string", "enum": ["json", "unified"], "default": "json" }
+        }
+      }
+    }
+  ],
+  "errors": {
+    "format": {
+      "type": "object",
+      "required": ["code", "message", "trace_id"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "VALIDATION", "UNAUTHORIZED", "FORBIDDEN", "NOT_FOUND",
+            "CONFLICT", "SUPERSEDE_CYCLE", "DUPLICATE",
+            "PRECONDITION_FAILED", "POLICY_REJECTED",
+            "SENSITIVE_REQUIRES_REVIEW", "LOCKED", "RATE_LIMITED",
+            "INTERNAL", "UNAVAILABLE"
+          ]
+        },
+        "message": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "details": { "type": "object" }
+      }
+    }
+  },
+  "notes": {
+    "rate_limits": "Per-token rate-limit. По умолчанию: read 100 rps, write 20 rps, recall 30 rps.",
+    "idempotency": "Любой write-tool принимает idempotency_key. Окно дедупликации — 24 часа.",
+    "audit": "Все вызовы логируются в audit-log с trace_id, subject, target, result.",
+    "deprecation": "Минимум 6 месяцев между объявлением и удалением tool в minor-версии."
+  }
+}

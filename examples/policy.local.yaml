@@ -1,0 +1,30 @@
+# Example policy for local single-user MCP mode.
+#
+# This is what `Policy::local_user(subject)` produces in code; provided here
+# as a starting point for users who want to load a YAML policy explicitly
+# (e.g. to add custom deny paths) instead of taking the in-process default.
+#
+# For multi-tenant deployments, replace the wildcard subject with explicit
+# user/agent identifiers and tighten the path globs.
+
+schema_version: memoryfs/v1
+
+default_acl:
+  deny_by_default: true
+  allow:
+    - path: "**"
+      subjects: ["user:alice"]
+      actions: ["read", "write", "list", "review", "commit", "revert"]
+  deny: []
+
+redaction:
+  fail_closed: true
+
+review:
+  require_review_for: ["pii", "secret", "medical", "legal", "financial"]
+  low_confidence_threshold: 0.6
+  scope_org_requires_review: true
+  review_ttl_hours: 168
+
+indexing:
+  auto_index: true

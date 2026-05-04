@@ -1,0 +1,90 @@
+[package]
+name = "memoryfs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+authors = ["MemoryFS contributors"]
+license = "MIT"
+description = "Verifiable per-project memory layer for AI agents — markdown source of truth, content-addressable storage, MCP server"
+repository = "https://github.com/stek0v/memoryfs"
+readme = "README.md"
+keywords = ["mcp", "memory", "agents", "claude", "llm"]
+categories = ["command-line-utilities", "database-implementations"]
+
+[lib]
+name = "memoryfs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "memoryfs"
+path = "src/main.rs"
+
+[dependencies]
+# JSON / YAML / serde
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Async runtime + HTTP server
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors", "trace", "limit", "timeout"] }
+
+# Tracing / logging / metrics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", features = ["http-listener"] }
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Hashing & IDs
+sha2 = "0.10"
+ulid = "1.1"
+hex = "0.4"
+
+# Validation
+jsonschema = "0.18"
+
+# Vector store / time
+qdrant-client = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# gRPC (Levara integration)
+tonic = "0.12"
+prost = "0.13"
+
+# Auth (JWT)
+jsonwebtoken = "9"
+rand = "0.8"
+
+# HTTP client (LLM + embedding API calls)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+# Full-text search (BM25)
+tantivy = "0.22"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# async traits
+async-trait = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"
+
+[profile.dev]
+opt-level = 1

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/conversation.schema.json",
+  "title": "MemoryFS Conversation Frontmatter",
+  "description": "Сохранённый диалог. Тело файла — markdown с турнами вида `## turn N (role:author) — ts`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "session_id",
+    "participants",
+    "created_at",
+    "author",
+    "permissions",
+    "redacted",
+    "extraction_status"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_conversation" },
+    "type": { "const": "conversation" },
+    "session_id": {
+      "description": "Стабильный идентификатор сессии. Не обязан быть ULID, но должен быть детерминирован для одной логической сессии.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_\\-]{1,64}$"
+    },
+    "participants": {
+      "description": "Все авторы турнов в этом диалоге.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/author" },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "created_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "updated_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "started_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "finished_at": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "author": { "$ref": "base.schema.json#/$defs/author" },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "scope": { "$ref": "base.schema.json#/$defs/scope" },
+    "scope_id": {
+      "type": "string",
+      "pattern": "^(user|agent|session|project|org):[A-Za-z0-9_\\-]+$"
+    },
+    "redacted": {
+      "description": "Прошёл ли файл через pre-redaction секретов и PII.",
+      "type": "boolean"
+    },
+    "redaction_summary": {
+      "description": "Сводка по тому, что было заменено маркерами в теле.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secrets_redacted": { "type": "integer", "minimum": 0 },
+        "pii_redacted": { "type": "integer", "minimum": 0 },
+        "redactor_version": { "type": "string", "maxLength": 64 },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "password",
+              "token",
+              "ssh_key",
+              "pem",
+              "jwt",
+              "credit_card",
+              "iban",
+              "ssn",
+              "email",
+              "phone",
+              "address",
+              "name",
+              "ip_address",
+              "high_entropy"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "sensitivity": { "$ref": "base.schema.json#/$defs/sensitivity" },
+    "extraction_status": {
+      "description": "Статус LLM-извлечения памятей из этого диалога.",
+      "type": "string",
+      "enum": ["pending", "in_progress", "completed", "failed", "skipped"]
+    },
+    "extraction_run_id": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/id_run" },
+        { "type": "null" }
+      ]
+    },
+    "extracted_memories": {
+      "description": "ID памятей, извлечённых из этого диалога. Append-only.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_memory" },
+      "uniqueItems": true,
+      "maxItems": 1024
+    },
+    "language": {
+      "description": "BCP-47 language tag, например `en`, `ru`, `en-US`.",
+      "type": "string",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2})?$"
+    },
+    "turn_count": { "type": "integer", "minimum": 0 },
+    "token_count": { "type": "integer", "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "description": "Если redacted=true, redaction_summary обязателен.",
+      "if": { "properties": { "redacted": { "const": true } } },
+      "then": { "required": ["redaction_summary"] }
+    },
+    {
+      "description": "completed/failed обязаны иметь extraction_run_id.",
+      "if": {
+        "properties": {
+          "extraction_status": { "enum": ["completed", "failed"] }
+        }
+      },
+      "then": { "required": ["extraction_run_id"] }
+    }
+  ]
+}

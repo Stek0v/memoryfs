@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/proposal.schema.json",
+  "title": "MemoryFS Memory Proposal Frontmatter",
+  "description": "Предлагаемая память, ожидающая review. Лежит в inbox/proposals/. После approve конвертируется в memory с новым id и переносится в memory/<scope>/<scope_id>/.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "proposed_memory",
+    "proposal_status",
+    "proposed_by",
+    "proposed_at",
+    "permissions"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_proposal" },
+    "type": { "const": "proposal" },
+    "proposed_memory": {
+      "description": "Полная заявка на память. Должна валидироваться против memory.schema.json при review (на этапе proposal — частично).",
+      "type": "object"
+    },
+    "proposal_status": {
+      "type": "string",
+      "enum": ["pending_review", "approved", "rejected", "expired"]
+    },
+    "proposed_by": { "$ref": "base.schema.json#/$defs/author" },
+    "proposed_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "review_required_reason": {
+      "description": "Почему предложение требует review. Может быть несколько причин.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "sensitivity",
+          "policy_global",
+          "scope_org",
+          "low_confidence",
+          "conflict",
+          "schema_drift",
+          "manual_request"
+        ]
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "review_assigned_to": {
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/subject_pattern" },
+      "uniqueItems": true,
+      "maxItems": 16
+    },
+    "expires_at": {
+      "description": "Если до этого момента нет решения — статус становится expired.",
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "review_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "by": { "$ref": "base.schema.json#/$defs/author" },
+        "at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        "decision": {
+          "type": "string",
+          "enum": ["approved", "rejected", "needs_changes"]
+        },
+        "reason": { "type": "string", "maxLength": 2048 },
+        "approved_memory_id": {
+          "oneOf": [
+            { "$ref": "base.schema.json#/$defs/id_memory" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "conflict_with": {
+      "description": "ID существующих памятей, с которыми предложение находится в конфликте (если review_required_reason содержит `conflict`).",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_memory" },
+      "uniqueItems": true,
+      "maxItems": 16
+    }
+  },
+  "allOf": [
+    {
+      "description": "Approved proposal обязан иметь approved_memory_id в review_decision.",
+      "if": { "properties": { "proposal_status": { "const": "approved" } } },
+      "then": {
+        "required": ["review_decision"],
+        "properties": {
+          "review_decision": {
+            "required": ["approved_memory_id", "by", "at", "decision"],
+            "properties": {
+              "decision": { "const": "approved" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Rejected proposal обязан иметь причину.",
+      "if": { "properties": { "proposal_status": { "const": "rejected" } } },
+      "then": {
+        "required": ["review_decision"],
+        "properties": {
+          "review_decision": {
+            "required": ["by", "at", "decision", "reason"],
+            "properties": {
+              "decision": { "const": "rejected" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://memoryfs.dev/schemas/v1/decision.schema.json",
+  "title": "MemoryFS Decision (ADR) Frontmatter",
+  "description": "Лёгкий ADR. Тело — markdown с разделами Context / Decision / Consequences. Append-only через supersedes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "type",
+    "adr_number",
+    "title",
+    "status",
+    "deciders",
+    "created_at",
+    "author",
+    "permissions"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "base.schema.json#/$defs/schema_version" },
+    "id": { "$ref": "base.schema.json#/$defs/id_decision" },
+    "type": { "const": "decision" },
+    "adr_number": {
+      "description": "Локальный номер ADR в порядке создания. Уникален в пределах workspace.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "accepted",
+        "rejected",
+        "deprecated",
+        "superseded"
+      ]
+    },
+    "deciders": {
+      "description": "Кто принял решение. Минимум один subject.",
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/author" },
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true
+    },
+    "created_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "updated_at": { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+    "decided_at": {
+      "oneOf": [
+        { "$ref": "base.schema.json#/$defs/iso8601_utc" },
+        { "type": "null" }
+      ]
+    },
+    "author": { "$ref": "base.schema.json#/$defs/author" },
+    "permissions": { "$ref": "base.schema.json#/$defs/permissions" },
+    "tags": { "$ref": "base.schema.json#/$defs/tags" },
+    "scope": { "$ref": "base.schema.json#/$defs/scope" },
+    "scope_id": {
+      "type": "string",
+      "pattern": "^(user|agent|session|project|org):[A-Za-z0-9_\\-]+$"
+    },
+    "context_refs": {
+      "description": "Ссылки на источники, обосновывающие решение (файлы, памяти, runs).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["file", "memory", "run", "url"]
+          },
+          "ref": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        }
+      },
+      "maxItems": 64
+    },
+    "supersedes": {
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_decision" },
+      "uniqueItems": true,
+      "maxItems": 16
+    },
+    "superseded_by": {
+      "type": "array",
+      "items": { "$ref": "base.schema.json#/$defs/id_decision" },
+      "uniqueItems": true,
+      "maxItems": 16
+    },
+    "consequences_summary": {
+      "description": "Короткая выдержка из раздела Consequences для retrieval.",
+      "type": "string",
+      "maxLength": 2048
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "accepted" } } },
+      "then": { "required": ["decided_at"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "superseded" } } },
+      "then": {
+        "required": ["superseded_by"],
+        "properties": {
+          "superseded_by": { "minItems": 1 }
+        }
+      }
+    }
+  ]
+}
