@@ -1,0 +1,27 @@
+[package]
+name = "memoryfs-cli"
+description = "MemoryFS command-line interface — REST server, MCP server (stdio), and client subcommands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "memoryfs"
+path = "src/main.rs"
+
+[dependencies]
+memoryfs = { path = "../core", package = "memoryfs-core" }
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+sha2.workspace = true
