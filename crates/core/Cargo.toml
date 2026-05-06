@@ -1,0 +1,51 @@
+[package]
+name = "memoryfs-core"
+description = "Verifiable per-project memory layer for AI agents — engine, storage, ACL, schema validation, retrieval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["mcp", "memory", "agents", "claude", "llm"]
+categories = ["command-line-utilities", "database-implementations"]
+
+[lib]
+name = "memoryfs"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+ulid.workspace = true
+hex.workspace = true
+jsonschema.workspace = true
+qdrant-client.workspace = true
+chrono.workspace = true
+tonic.workspace = true
+prost.workspace = true
+jsonwebtoken.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+tantivy.workspace = true
+async-trait.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile = "3"

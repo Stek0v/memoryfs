@@ -1,25 +1,21 @@
-[package]
-name = "memoryfs"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/cli",
+]
+default-members = ["crates/cli"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 authors = ["MemoryFS contributors"]
 license = "MIT"
-description = "Verifiable per-project memory layer for AI agents — markdown source of truth, content-addressable storage, MCP server"
 repository = "https://github.com/stek0v/memoryfs"
 readme = "README.md"
-keywords = ["mcp", "memory", "agents", "claude", "llm"]
-categories = ["command-line-utilities", "database-implementations"]
 
-[lib]
-name = "memoryfs"
-path = "src/lib.rs"
-
-[[bin]]
-name = "memoryfs"
-path = "src/main.rs"
-
-[dependencies]
+[workspace.dependencies]
 # JSON / YAML / serde
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -55,6 +51,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # gRPC (Levara integration)
 tonic = "0.12"
+tonic-build = "0.12"
 prost = "0.13"
 
 # Auth (JWT)
@@ -73,12 +70,8 @@ clap = { version = "4", features = ["derive", "env"] }
 # async traits
 async-trait = "0.1"
 
-[build-dependencies]
-tonic-build = "0.12"
-
-[dev-dependencies]
+# dev / test
 proptest = "1"
-tempfile = "3"
 
 [profile.release]
 lto = "thin"
