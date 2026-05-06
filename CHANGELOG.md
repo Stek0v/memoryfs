@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed (2026-05-06 — monorepo consolidation)
+- `stek0v/memoryfs` is now the **single canonical home** for the project. The previously-separate planning repository [`stek0v/LevaraOs`](https://github.com/stek0v/LevaraOs) has been archived and its contents merged here. Production engine (`crates/`), spec contracts (`specs/`), planning prose (`docs/planning/`), test fixtures (`fixtures/`), adversarial test suites (`tests/adversarial/`), Python workers (`workers/`), eval harnesses (`eval/`), benchmarks (`bench/`), and dev tooling (`Justfile`, `scripts/`, lint configs) all live here now.
+- Crate layout switched to a Cargo workspace with members `crates/core` (lib `memoryfs`, package `memoryfs-core`) and `crates/cli` (bin `memoryfs`, package `memoryfs-cli`). `cargo install --git https://github.com/stek0v/memoryfs --locked` continues to work without a `--bin` flag (`default-members = ["crates/cli"]`).
+- `CONTRIBUTING.md` replaced with the more comprehensive 96-line version from the former planning repo.
+
 ### Added
-- Initial public release of the deployable subset.
-- Single-crate layout: `memoryfs` (lib + bin) replaces the prior `memoryfs-core` + `memoryfs` workspace split from the planning repo.
+- Initial public release.
 - MCP server (`memoryfs mcp`) with 17 tools matching `specs/mcp.tools.json`.
 - REST server (`memoryfs serve`) implementing `specs/openapi.yaml`.
 - `initialize.instructions` ships the behavioral contract — recall-first, path conventions, supersede-only for decisions/discoveries, what-not-to-save.
@@ -18,5 +22,3 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Deterministic `MemoryId::from_path` for idempotent re-indexing.
 - Documentation: architecture (EN + RU), install (EN + RU), per-component docs, integration guides for Claude Code / REST / Levara, manual e2e checklist.
 
-### Notes
-- This repo is the deployable subset of [memoryfs-planning](https://github.com/stek0v/memoryfs-planning) — design docs, eval pipeline, adversarial suites, fixtures, and the Python extractor stub stay there.
