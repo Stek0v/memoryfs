@@ -1,0 +1,14 @@
+{
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "tp": 240,
+  "fp": 0,
+  "fn": 0,
+  "sensitivity_accuracy": 0.8333333333333334,
+  "entity_precision": 1.0,
+  "entity_recall": 1.0,
+  "entity_f1": 1.0,
+  "pii_detection_rate": 1.0,
+  "secret_detection_rate": 0.0
+}

@@ -1,0 +1,181 @@
+schema_version: memoryfs-test/v1
+description: |
+  Expected behaviour для killer-demo-with-conflict fixture. Это тестирует ключевые
+  инварианты supersede:
+    - двусторонняя связность (supersedes ↔ superseded_by)
+    - отсутствие циклов
+    - target_locked_pending_review во время review
+    - финальные состояния после approve и после reject
+    - атомарность апдейта (один коммит на два файла)
+    - retrieval отдаёт active, не superseded (если не запрошено явно)
+
+workspace: ws_01HZM5N2P4Q6R8T0V2X4Z6B8D0
+
+# ---------- 1. Структурные инварианты на любом read ----------
+invariants:
+
+  - id: STRUCT-1
+    description: |
+      Если memory.status == "superseded", то superseded_by обязан содержать ≥1 ID,
+      и каждый из этих ID должен иметь supersedes, содержащий исходную память.
+    pseudo_check: |
+      forall m in memories where m.status == "superseded":
+        assert len(m.superseded_by) >= 1
+        forall succ_id in m.superseded_by:
+          succ = memories[succ_id]
+          assert m.id in succ.supersedes
+
+  - id: STRUCT-2
+    description: |
+      Если memory.status == "active", superseded_by должен быть пустым.
+    pseudo_check: |
+      forall m in memories where m.status == "active":
+        assert len(m.superseded_by or []) == 0
+
+  - id: STRUCT-3
+    description: |
+      Граф supersedes — DAG. Циклы запрещены, обнаруживаются при validate_workspace.
+    pseudo_check: |
+      build directed graph: edge (a → b) iff b in a.superseded_by
+      assert is_dag(graph)
+      on cycle: ERROR code SUPERSEDE_CYCLE
+
+  - id: STRUCT-4
+    description: |
+      conflict_type обязан совпадать на обеих сторонах, если задан.
+    pseudo_check: |
+      forall m in memories:
+        forall succ_id in (m.superseded_by or []):
+          if m.conflict_type and memories[succ_id].conflict_type:
+            assert m.conflict_type == memories[succ_id].conflict_type
+
+# ---------- 2. Состояния при разных режимах ----------
+
+state_at_proposal_time:
+  description: Состояние после run_01HZM5N4P6Q8R0S2T4V6X8Z0B2 до review.
+  expected_files:
+    - path: memory/users/alice/ide-preference.md
+      memory_id: mem_01HZM2A4B6C8D0E2F4G6H8J0K2
+      status: active                     # старая ещё active, lock не меняет статус
+      superseded_by: []
+      target_locked_pending_review: true
+    - path: memory/users/alice/ide-preference-current.md
+      exists: false                       # новая ещё не создана, лежит как proposal
+    - path: inbox/proposals/prp_01HZM5R5S7T9V1W3X5Y7Z9A1B3.md
+      exists: true
+      proposal_status: pending_review
+      proposed_memory.supersedes: ["mem_01HZM2A4B6C8D0E2F4G6H8J0K2"]
+      proposed_memory.conflict_type: contradiction
+
+state_after_approve:
+  description: Состояние после approve. Один атомарный коммит.
+  expected_commit:
+    files_changed:
+      - path: memory/users/alice/ide-preference.md
+        change: modified
+      - path: memory/users/alice/ide-preference-current.md
+        change: added
+      - path: inbox/proposals/prp_01HZM5R5S7T9V1W3X5Y7Z9A1B3.md
+        change: modified                 # status → approved
+  expected_files:
+    - path: memory/users/alice/ide-preference.md
+      memory_id: mem_01HZM2A4B6C8D0E2F4G6H8J0K2
+      status: superseded
+      superseded_by: ["mem_01HZM5P3Q5R7S9T1V3W5X7Y9Z1"]
+      conflict_type: contradiction
+      target_locked_pending_review: false   # снят
+    - path: memory/users/alice/ide-preference-current.md
+      memory_id: mem_01HZM5P3Q5R7S9T1V3W5X7Y9Z1
+      status: active
+      supersedes: ["mem_01HZM2A4B6C8D0E2F4G6H8J0K2"]
+      conflict_type: contradiction
+    - path: inbox/proposals/prp_01HZM5R5S7T9V1W3X5Y7Z9A1B3.md
+      proposal_status: approved
+      review_decision.approved_memory_id: mem_01HZM5P3Q5R7S9T1V3W5X7Y9Z1
+      review_decision.decision: approved
+
+state_after_reject:
+  description: Альтернативный исход — Alice отклонила supersede.
+  expected_commit:
+    files_changed:
+      - path: inbox/proposals/prp_01HZM5R5S7T9V1W3X5Y7Z9A1B3.md
+        change: modified
+  expected_files:
+    - path: memory/users/alice/ide-preference.md
+      status: active                      # без изменений
+      superseded_by: []
+      target_locked_pending_review: false # снят
+    - path: memory/users/alice/ide-preference-current.md
+      exists: false                       # новая память не создаётся при reject
+    - path: inbox/proposals/prp_01HZM5R5S7T9V1W3X5Y7Z9A1B3.md
+      proposal_status: rejected
+      review_decision.decision: rejected
+      review_decision.reason: required_non_empty
+
+# ---------- 3. Retrieval поведение ----------
+
+retrieval_queries:
+
+  - id: rq_default_only_active
+    query: "What IDE does Alice use?"
+    subject: user:alice
+    fixture_state: state_after_approve
+    options:
+      include_superseded: false
+    expected:
+      top_1: memory/users/alice/ide-preference-current.md
+      must_include:
+        - memory/users/alice/ide-preference-current.md
+      must_exclude:
+        - memory/users/alice/ide-preference.md   # superseded скрыта
+    notes: По умолчанию retrieval отдаёт только active.
+
+  - id: rq_explicit_history
+    query: "What IDE did Alice use before Cursor?"
+    subject: user:alice
+    fixture_state: state_after_approve
+    options:
+      include_superseded: true
+    expected:
+      must_include:
+        - memory/users/alice/ide-preference.md
+        - memory/users/alice/ide-preference-current.md
+    notes: Запрос истории должен явно требовать include_superseded.
+
+  - id: rq_provenance_chain
+    query: "Trace history of Alice's IDE preference"
+    subject: user:alice
+    fixture_state: state_after_approve
+    expected_chain:
+      - memory_id: mem_01HZM5P3Q5R7S9T1V3W5X7Y9Z1
+        status: active
+        depth: 0
+      - memory_id: mem_01HZM2A4B6C8D0E2F4G6H8J0K2
+        status: superseded
+        depth: 1
+    notes: |
+      `memoryfs_get_provenance` с include_chain=true должен вернуть всю цепочку.
+
+# ---------- 4. Adversarial проверки ----------
+
+adversarial:
+
+  - id: adv_double_supersede_locked
+    description: Попытка supersede того же target пока review pending.
+    setup: state_at_proposal_time
+    request:
+      tool: memoryfs_supersede_memory
+      target_memory_id: mem_01HZM2A4B6C8D0E2F4G6H8J0K2
+      new_memory: { ... }
+    expected_error: LOCKED
+    notes: target_locked_pending_review должен возвращать 423 LOCKED.
+
+  - id: adv_supersede_cycle
+    description: Попытка создать цикл A → B → A.
+    expected_error: SUPERSEDE_CYCLE
+    notes: Detector должен ловить это до записи.
+
+  - id: adv_self_supersede
+    description: Память пытается supersede саму себя.
+    expected_error: VALIDATION
+    notes: Это частный случай SUPERSEDE_CYCLE, но обнаруживается раньше — на schema-валидации.

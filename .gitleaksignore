@@ -1,0 +1,13 @@
+# Adversarial test corpora — намеренно содержат "секретоподобные" строки.
+# Это тестовые кейсы из публичной документации (Stripe test keys, AWS docs example,
+# OpenAI/Anthropic format examples, jwt.io classic example) и синтетические
+# значения для проверки pre-redaction. Реальные секреты сюда не попадают.
+tests/adversarial/secrets-suite/corpora.jsonl
+
+# Killer-demo conversation демонстрирует pre-redaction в действии — содержит
+# placeholder [REDACTED:api_key]; gitleaks может на это среагировать.
+fixtures/killer-demo/conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md
+
+# Schema-violations самотест содержит синтетические значения для проверки
+# граничных случаев (например, заведомо плохие ULID).
+tests/adversarial/schema-violations/violations.jsonl

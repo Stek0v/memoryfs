@@ -1,0 +1,10 @@
+[advisories]
+ignore = [
+    # `instant` is unmaintained — transitive via tantivy 0.22 → measure_time.
+    # Will resolve when tantivy drops measure_time (tracked upstream).
+    "RUSTSEC-2024-0384",
+
+    # `lru` IterMut unsoundness — transitive via tantivy 0.22.
+    # We don't use LRU iteration directly; risk is contained to tantivy internals.
+    "RUSTSEC-2026-0002",
+]

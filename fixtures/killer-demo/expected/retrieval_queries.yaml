@@ -1,0 +1,179 @@
+schema_version: memoryfs-test/v1
+description: |
+  Golden retrieval queries для killer-demo workspace. Каждый запрос имеет ожидаемые
+  результаты в двух форматах:
+    - must_include: пути, которые ОБЯЗАНЫ присутствовать в top-K (recall@K).
+    - must_exclude: пути, которые ДОЛЖНЫ отсутствовать (защита от ложных срабатываний).
+    - top_1: путь, который должен быть #1 в ранжировании (NDCG@1).
+  Метрики, которые эта suite вычисляет:
+    - recall@5, recall@10
+    - NDCG@10
+    - precision@5
+    - mean reciprocal rank
+  Запросы калиброваны под содержимое killer-demo на коммите HEAD (после run_01HZK4M5...).
+
+workspace: ws_01HZK4M0Z3Y6X9W2V5N8T1S4R7
+fixture_commit: "9b4c7e0d3a6f1e2c5b8d1a4f7c0e3b6d9a2f5c8e1b4d7a0c3f6e9b2d5a8c1f4e"
+
+queries:
+
+  - id: q01_vector_store_choice
+    query: "Why did we pick Qdrant for the vector store?"
+    subject: user:alice
+    expected:
+      top_1: decisions/0001-vector-store-choice.md
+      must_include:
+        - decisions/0001-vector-store-choice.md
+        - memory/projects/memoryfs/vector-store-choice.md
+        - conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md
+      must_exclude: []
+    notes: |
+      Прямой запрос на ADR. Memory с выдержкой ниже, conversation как первоисточник.
+      Если ADR не #1 — баг в графе или relevance: ADR имеет наивысший signal-вес.
+
+  - id: q02_alice_languages
+    query: "What programming languages does Alice prefer?"
+    subject: user:alice
+    expected:
+      top_1: memory/users/alice/profile.md
+      must_include:
+        - memory/users/alice/profile.md
+      must_exclude:
+        - memory/agents/coder/preferences.md
+    notes: |
+      Profile-память pii, accessible для alice. Coder preferences упоминают Rust/Python тоже,
+      но это про инструменты, не про user preferences — должно быть исключено.
+
+  - id: q03_coder_lint_rules
+    query: "What checks must run before a commit?"
+    subject: agent:coder
+    expected:
+      top_1: memory/agents/coder/preferences.md
+      must_include:
+        - memory/agents/coder/preferences.md
+      must_exclude: []
+    notes: |
+      Coder читает свои собственные правила. Subject=agent:coder — должен иметь read на
+      memory/agents/coder/**.
+
+  - id: q04_acl_isolation_other_user
+    query: "What programming languages does Alice prefer?"
+    subject: user:bob
+    expected:
+      top_1: null
+      must_include: []
+      must_exclude:
+        - memory/users/alice/profile.md
+        - conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md
+    notes: |
+      ACL-фильтр после retrieval отрезает alice'у память от bob'а. Even если retrieval нашёл,
+      финальный ответ — пуст. Это I3/I5 в threat-model.
+
+  - id: q05_acl_isolation_unknown_agent
+    query: "Show me the ADR about retrieval backend"
+    subject: agent:unknown
+    expected:
+      top_1: null
+      must_include: []
+      must_exclude:
+        - decisions/0001-vector-store-choice.md
+    notes: |
+      Decisions имеют read для четырёх известных subject'ов. agent:unknown — deny_by_default.
+
+  - id: q06_provenance_resolves_to_source
+    query: "Where did the rule about no unwrap in production come from?"
+    subject: user:alice
+    expected:
+      top_1: memory/agents/coder/preferences.md
+      must_include:
+        - memory/agents/coder/preferences.md
+        - conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md
+      must_exclude: []
+    notes: |
+      Provenance test: coder preferences → conv turn 4 ("Preferences for the coder agent").
+      Provenance graph должен поднять conversation как related-результат через source_file edge.
+
+  - id: q07_pending_review_inbox
+    query: "What proposals are waiting for my review?"
+    subject: user:alice
+    expected:
+      top_1: inbox/proposals/prp_01HZK4M8X1Y2Z3A4B5C6D7E8F9.md
+      must_include:
+        - inbox/proposals/prp_01HZK4M8X1Y2Z3A4B5C6D7E8F9.md
+      must_exclude: []
+    notes: |
+      Inbox-запрос. Должен ранжировать pending выше всего, фильтр type=proposal.
+
+  - id: q08_alice_schedule_pii_filtered_for_secret_scope
+    query: "When does Alice work?"
+    subject: agent:coder
+    expected:
+      top_1: memory/users/alice/profile.md
+      must_include:
+        - memory/users/alice/profile.md
+      must_exclude: []
+    notes: |
+      Profile.md — sensitivity=pii, но НЕ secret. coder включён в read для этого пути.
+      Если бы был secret — exclude_sensitivity исключил бы его из vector index, и retrieval
+      вернул бы пусто.
+
+  - id: q09_secret_in_redacted_conversation
+    query: "qdrant API key for the test cluster"
+    subject: user:alice
+    expected:
+      top_1: null
+      must_include: []
+      must_exclude:
+        - conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md
+    notes: |
+      Pre-redaction в conversation заменил API-ключ на [REDACTED:api_key]. Vector retrieval
+      по запросу "api key" не должен подхватывать редактированную часть как relevant — там
+      нет реального ключа. И сам запрос не должен возвращать это conversation как top.
+
+  - id: q10_entity_alice_owns_memoryfs
+    query: "Who is leading the MemoryFS project?"
+    subject: user:alice
+    expected:
+      top_1: entities/people/alice.md
+      must_include:
+        - entities/people/alice.md
+        - entities/projects/memoryfs.md
+      must_exclude: []
+    notes: |
+      Graph signal: edge alice → OWNS → memoryfs. Должен поднять обе entity рядом.
+
+  - id: q11_recency_bias_works
+    query: "Latest decisions about MemoryFS"
+    subject: user:alice
+    expected:
+      top_1: decisions/0001-vector-store-choice.md
+      must_include:
+        - decisions/0001-vector-store-choice.md
+      must_exclude: []
+    notes: |
+      Recency-фактор должен подтягивать свежие ADR. На fixture только один ADR — он top.
+      Тест расширяется при добавлении ADR-002+.
+
+  - id: q12_does_not_hallucinate
+    query: "How does MemoryFS handle quantum encryption?"
+    subject: user:alice
+    expected:
+      top_1: null
+      must_include: []
+      must_exclude:
+        - "*"
+    notes: |
+      Negative test: ничего нет. min_confidence фильтр должен дать пустой результат.
+      Если retrieval возвращает что-то с похожей похожестью на encryption — это false positive.
+      Acceptable: retrieval может вернуть результаты, но recall agent должен пометить их
+      как low-confidence; для теста — items=0 после min_confidence=0.5.
+
+scoring:
+  recall_at_5_target: 0.95
+  recall_at_10_target: 1.0
+  ndcg_at_10_target: 0.85
+  precision_at_5_target: 0.80
+  mrr_target: 0.85
+  notes: |
+    Эти таргеты — exit-критерий Phase 4 (Retrieval). Если значения ниже — не релизим
+    retrieval-pipeline. См. 04-tasks-dod 4.x и 06-testing-strategy §eval.

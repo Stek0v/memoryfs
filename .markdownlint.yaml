@@ -1,0 +1,34 @@
+# MemoryFS markdown lint config
+# Документация: https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
+
+default: true
+
+# Длина строки — мягкое ограничение, не блокирующее
+MD013:
+  line_length: 120
+  code_blocks: false
+  tables: false
+  headings: false
+
+# Multiple top-level H1 — отключено (фронтматтер генерирует свой заголовок)
+MD025: false
+
+# Дубликаты заголовков допустимы внутри разных секций (например, "## Notes")
+MD024:
+  siblings_only: true
+
+# Списки могут начинаться с '-' или '*' — не строжим
+MD004:
+  style: dash
+
+# HTML внутри markdown допустим (используем для callout'ов и ASCII-схем)
+MD033: false
+
+# Bare URL — иногда удобнее markdown reference, иногда нет, не строжим
+MD034: false
+
+# Ссылки на файлы внутри репозитория — допустимы относительные с пробелами
+MD051: false
+
+# PR template начинается с HTML-комментария, а не с заголовка
+MD041: false
