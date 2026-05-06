@@ -1,0 +1,105 @@
+# Pre-commit hooks для MemoryFS.
+# Установка: pre-commit install --install-hooks (делается scripts/bootstrap.sh)
+#
+# Порядок: дешёвые проверки сначала, дорогие — в конце.
+
+repos:
+
+  # ---- Базовая гигиена ----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'   # markdown: trailing whitespace может быть значим (line break)
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--multi]    # docker-compose использует ---
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=5120]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ---- Защита от секретов ----
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        # Используем gitleaks в дополнение к нашему собственному secrets-suite,
+        # потому что он проверяет diff, а не сам корпус.
+
+  # ---- Rust ----
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all -- --check
+        language: system
+        files: \.rs$
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        stages: [pre-push]   # дороже — только на push
+
+  # ---- Python ----
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # ---- Schemas / fixtures / drift ----
+  - repo: local
+    hooks:
+      - id: validate-schemas
+        name: validate JSON Schemas v1
+        entry: python3 scripts/validate_schemas.py
+        language: system
+        files: '^specs/schemas/v1/.*\.schema\.json$'
+        pass_filenames: false
+
+      - id: validate-fixtures
+        name: validate fixtures против schemas/v1
+        entry: python3 scripts/validate_fixtures.py
+        language: system
+        files: '^(fixtures/|specs/schemas/v1/)'
+        pass_filenames: false
+
+      - id: schema-violations-self-test
+        name: schema-violations self-test
+        entry: python3 scripts/test_schema_violations.py
+        language: system
+        files: '^(tests/adversarial/schema-violations/|specs/schemas/v1/)'
+        pass_filenames: false
+
+      - id: drift-checker
+        name: drift between prose and schemas
+        entry: python3 scripts/crosscheck_data_model.py
+        language: system
+        files: '^(02-data-model\.md|specs/schemas/v1/)'
+        pass_filenames: false
+        # Не блокирующий хук — только сообщает (см. DRIFT-REPORT.md).
+        verbose: true
+        always_run: false
+        # `pre-commit` не имеет нативного флага non-blocking, поэтому в реальности
+        # этот хук падает и сообщает, но мы временно просим запускать его руками
+        # через `just crosscheck-data-model`.
+        stages: [manual]
+
+  # ---- Markdown (мягкий) ----
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.43.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.yaml]
+        # Не блокируем PR — только сообщаем.
+        stages: [manual]

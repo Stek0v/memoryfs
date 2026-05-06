@@ -1,0 +1,276 @@
+{
+  "$schema": "https://memoryfs.dev/schemas/test/acl-matrix.json",
+  "description": "Golden expectations для killer-demo workspace. Каждая ячейка — что должна вернуть ACL-проверка для данного subject + path + action. Тесты прогоняют этот файл через ACL-engine и сверяют побитово.",
+  "workspace": "ws_01HZK4M0Z3Y6X9W2V5N8T1S4R7",
+  "policy_path": ".memoryfs/policy.yaml",
+  "policy_commit": "9b4c7e0d3a6f1e2c5b8d1a4f7c0e3b6d9a2f5c8e1b4d7a0c3f6e9b2d5a8c1f4e",
+  "subjects_under_test": [
+    "user:alice",
+    "agent:coder",
+    "agent:reviewer",
+    "agent:architect",
+    "agent:unknown",
+    "user:bob",
+    "anonymous"
+  ],
+  "actions": ["read", "write", "review", "commit", "revert", "list"],
+  "test_cases": [
+    {
+      "case_id": "alice_reads_own_profile",
+      "subject": "user:alice",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#0"
+    },
+    {
+      "case_id": "alice_writes_own_profile",
+      "subject": "user:alice",
+      "path": "memory/users/alice/profile.md",
+      "action": "write",
+      "expected": "allowed",
+      "expected_rule": "allow#1"
+    },
+    {
+      "case_id": "alice_reviews_own_profile",
+      "subject": "user:alice",
+      "path": "memory/users/alice/profile.md",
+      "action": "review",
+      "expected": "allowed",
+      "expected_rule": "allow#1"
+    },
+    {
+      "case_id": "coder_reads_alice_profile_pii_allowed",
+      "subject": "agent:coder",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#0",
+      "notes": "Coder включён в список read для alice'а профиля. Sensitivity=pii не блокирует чтение, только индексацию (exclude_sensitivity)."
+    },
+    {
+      "case_id": "coder_cannot_write_alice_profile",
+      "subject": "agent:coder",
+      "path": "memory/users/alice/profile.md",
+      "action": "write",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "В allow#1 для memory/users/alice/** для write только user:alice."
+    },
+    {
+      "case_id": "coder_writes_own_preferences",
+      "subject": "agent:coder",
+      "path": "memory/agents/coder/preferences.md",
+      "action": "write",
+      "expected": "allowed",
+      "expected_rule": "allow#3"
+    },
+    {
+      "case_id": "alice_reviews_coder_preferences",
+      "subject": "user:alice",
+      "path": "memory/agents/coder/preferences.md",
+      "action": "review",
+      "expected": "allowed",
+      "expected_rule": "allow#4"
+    },
+    {
+      "case_id": "architect_writes_project_memory",
+      "subject": "agent:architect",
+      "path": "memory/projects/memoryfs/vector-store-choice.md",
+      "action": "write",
+      "expected": "allowed",
+      "expected_rule": "allow#6"
+    },
+    {
+      "case_id": "coder_cannot_write_project_memory",
+      "subject": "agent:coder",
+      "path": "memory/projects/memoryfs/vector-store-choice.md",
+      "action": "write",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "Project-память — write только architect и alice."
+    },
+    {
+      "case_id": "coder_reads_project_memory",
+      "subject": "agent:coder",
+      "path": "memory/projects/memoryfs/vector-store-choice.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#5"
+    },
+    {
+      "case_id": "alice_reviews_project_decision",
+      "subject": "user:alice",
+      "path": "decisions/0001-vector-store-choice.md",
+      "action": "review",
+      "expected": "allowed",
+      "expected_rule": "allow#10"
+    },
+    {
+      "case_id": "architect_writes_decision",
+      "subject": "agent:architect",
+      "path": "decisions/0001-vector-store-choice.md",
+      "action": "write",
+      "expected": "allowed",
+      "expected_rule": "allow#10"
+    },
+    {
+      "case_id": "coder_cannot_review_decision",
+      "subject": "agent:coder",
+      "path": "decisions/0001-vector-store-choice.md",
+      "action": "review",
+      "expected": "denied",
+      "expected_rule": "deny_by_default"
+    },
+    {
+      "case_id": "reviewer_can_read_conversation",
+      "subject": "agent:reviewer",
+      "path": "conversations/2026/04/30/conv_01HZK4M2A5B8C0D2E5F8G1H4J7.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#7"
+    },
+    {
+      "case_id": "alice_reads_run_artifacts",
+      "subject": "user:alice",
+      "path": "runs/run_01HZK4M5J8K1M4N7P0Q3R6S9T2/result.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#12"
+    },
+    {
+      "case_id": "alice_cannot_write_run_artifacts",
+      "subject": "user:alice",
+      "path": "runs/run_01HZK4M5J8K1M4N7P0Q3R6S9T2/result.md",
+      "action": "write",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "Runs — write только agents. Alice может revert через workspace, но не править артефакты напрямую."
+    },
+    {
+      "case_id": "alice_reads_inbox",
+      "subject": "user:alice",
+      "path": "inbox/proposals/prp_01HZK4M8X1Y2Z3A4B5C6D7E8F9.md",
+      "action": "read",
+      "expected": "allowed",
+      "expected_rule": "allow#13"
+    },
+    {
+      "case_id": "alice_reviews_inbox",
+      "subject": "user:alice",
+      "path": "inbox/proposals/prp_01HZK4M8X1Y2Z3A4B5C6D7E8F9.md",
+      "action": "review",
+      "expected": "allowed",
+      "expected_rule": "allow#13"
+    },
+    {
+      "case_id": "architect_writes_proposal",
+      "subject": "agent:architect",
+      "path": "inbox/proposals/prp_01HZK4M8X1Y2Z3A4B5C6D7E8F9.md",
+      "action": "write",
+      "expected": "allowed",
+      "expected_rule": "allow#14"
+    },
+    {
+      "case_id": "agent_unknown_denied_everywhere",
+      "subject": "agent:unknown",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "Деньи по умолчанию для незнакомых subjects, даже на read."
+    },
+    {
+      "case_id": "user_bob_denied_alice_profile",
+      "subject": "user:bob",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "Cross-user изоляция в одном workspace."
+    },
+    {
+      "case_id": "anonymous_denied_health_only",
+      "subject": "anonymous",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "deny_by_default"
+    },
+    {
+      "case_id": "agent_cannot_touch_dot_memoryfs",
+      "subject": "agent:architect",
+      "path": ".memoryfs/policy.yaml",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "deny#0",
+      "notes": "Жёсткий deny .memoryfs/** для всех agent:* . Перекрывает любой allow."
+    },
+    {
+      "case_id": "agent_cannot_write_policy",
+      "subject": "agent:architect",
+      "path": ".memoryfs/policy.yaml",
+      "action": "write",
+      "expected": "denied",
+      "expected_rule": "deny#0",
+      "notes": "E1/E4 в threat-model: эскалация через policy запрещена."
+    },
+    {
+      "case_id": "alice_can_write_policy",
+      "subject": "user:alice",
+      "path": ".memoryfs/policy.yaml",
+      "action": "write",
+      "expected": "denied",
+      "expected_rule": "deny_by_default",
+      "notes": "Даже alice не имеет write на policy в текущей конфигурации — это требует role:admin (отдельный subject)."
+    },
+    {
+      "case_id": "path_traversal_blocked",
+      "subject": "user:alice",
+      "path": "memory/users/alice/../../bob/profile.md",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "path_traversal_rejected",
+      "notes": "E7 в threat-model: regex базовой схемы (`^(?!.*\\.\\.).*`) отбрасывает до ACL."
+    },
+    {
+      "case_id": "absolute_path_blocked",
+      "subject": "user:alice",
+      "path": "/etc/passwd",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "absolute_path_rejected"
+    },
+    {
+      "case_id": "unicode_homoglyph_blocked",
+      "subject": "user:аlice",
+      "path": "memory/users/alice/profile.md",
+      "action": "read",
+      "expected": "denied",
+      "expected_rule": "unicode_normalization",
+      "notes": "E8: `аlice` (с кириллической `а`) после NFKC ≠ `alice`. Subject не матчится policy, deny_by_default."
+    }
+  ],
+  "invariants": [
+    {
+      "id": "INV-1",
+      "description": "Per-file permissions ⊆ global default_acl. Если файл объявляет write для subject X, X должен иметь write в default_acl.allow для совместимого пути.",
+      "check": "for each file frontmatter.permissions, intersect with default_acl, must equal frontmatter.permissions"
+    },
+    {
+      "id": "INV-2",
+      "description": "deny всегда побеждает allow. .memoryfs/** для agent:* deny не обходится никаким allow.",
+      "check": "for path matching deny rule, action denied regardless of allow rules"
+    },
+    {
+      "id": "INV-3",
+      "description": "deny_by_default: subject вне любых allow получает denied на любое действие.",
+      "check": "subject not in any allow.subjects ∩ path → denied"
+    },
+    {
+      "id": "INV-4",
+      "description": "Path traversal отбрасывается на схема-уровне до ACL.",
+      "check": "regex ^(?!.*\\.\\.)[A-Za-z0-9_./-]+$ matches before ACL"
+    }
+  ]
+}

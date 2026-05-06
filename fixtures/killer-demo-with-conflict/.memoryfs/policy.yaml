@@ -1,0 +1,82 @@
+schema_version: memoryfs/v1
+workspace_id: ws_01HZM5N2P4Q6R8T0V2X4Z6B8D0
+name: killer-demo-with-conflict
+
+default_acl:
+  deny_by_default: true
+  allow:
+    - path: "memory/users/alice/**"
+      subjects: ["user:alice", "agent:architect"]
+      actions: ["read"]
+    - path: "memory/users/alice/**"
+      subjects: ["user:alice"]
+      actions: ["write", "review"]
+    - path: "memory/users/alice/**"
+      subjects: ["agent:architect"]
+      actions: ["write"]
+    - path: "conversations/**"
+      subjects: ["user:alice", "agent:architect"]
+      actions: ["read", "write"]
+    - path: "runs/**"
+      subjects: ["agent:architect"]
+      actions: ["read", "write"]
+    - path: "runs/**"
+      subjects: ["user:alice"]
+      actions: ["read"]
+    - path: "inbox/**"
+      subjects: ["user:alice"]
+      actions: ["read", "review"]
+    - path: "inbox/**"
+      subjects: ["agent:architect"]
+      actions: ["read", "write"]
+    - path: "archive/**"
+      subjects: ["user:alice"]
+      actions: ["read", "write"]
+  deny:
+    - path: ".memoryfs/**"
+      subjects: ["agent:*"]
+      actions: ["read", "write"]
+
+redaction:
+  enabled: true
+  rules: [api_key, password, token, ssh_key, jwt, credit_card, email, phone]
+  high_entropy_threshold_bits: 4.5
+  fail_closed: true
+
+review:
+  sensitive_requires_review: ["pii", "secret", "medical", "legal", "financial"]
+  low_confidence_threshold: 0.6
+  scope_org_requires_review: true
+  reviewer_must_differ_from_author: true
+  review_ttl_hours: 168
+
+indexing:
+  vector_store:
+    kind: qdrant
+    url: http://localhost:6333
+    collection: memoryfs_killer_demo_conflict
+  embedding_model:
+    provider: openai
+    name: text-embedding-3-small
+    dim: 1536
+  exclude_sensitivity: ["secret"]
+  chunk:
+    max_tokens: 512
+    overlap_tokens: 64
+    respect_headings: true
+
+retention:
+  episodic_default_ttl_days: 90
+  archive_after_superseded_days: 30
+  audit_log_retention_days: 365
+
+extraction:
+  enabled: true
+  model: anthropic/claude-opus-4-7
+  max_memories_per_conversation: 32
+  min_confidence_to_propose: 0.4
+  languages: ["en"]
+
+audit:
+  tamper_evident: true
+  fsync_per_event: true
